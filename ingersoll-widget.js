@@ -1,0 +1,447 @@
+/* ==========================================================================
+   Ingersoll Catalog Widget — shared rendering logic
+   --------------------------------------------------------------------------
+   Hosted at:
+     https://raw.githubusercontent.com/ingersollsteve90-ux/ingersoll-catalog-widget/main/ingersoll-widget.js
+
+   This file is loaded via <script src="..."> from every catalog-section
+   widget on caseingersollparts.com. It defines:
+
+     1. window.IngersollCatalog — the shared live-Duda-store lookup module.
+        Guarded so however many section widgets are on one page, the
+        ~8,700-product catalog is fetched exactly ONCE and shared by all
+        of them.
+
+     2. window.IngersollWidgetInit(root, hotspots, footnotesText) — call
+        this once per widget instance, passing:
+          - root:          the widget's own .ingersoll-catalog-widget element
+          - hotspots:       that section's hotspot array (ref/x/y/partNo/desc,
+                            or ref/x/y/variants for serial-number splits)
+          - footnotesText: that section's free-text serial-number notes,
+                            or "" if none
+
+   DATA MODEL (per hotspot)
+   ------------------------
+   Each hotspot has a ref/x/y (position on the diagram) plus EITHER:
+     - flat fields: partNo, desc                          (single-part ref)
+   OR:
+     - a "variants" array, each entry shaped like the flat fields above,
+       plus a "serialNote" string describing which serial-number range it
+       applies to (e.g. "* Prior to S/N 12345", "** S/N 12345 & up").
+
+   Stock status, price, and the Add-to-Cart link are NOT stored here —
+   they're resolved live from the Duda store at page-load time via
+   IngersollCatalog, keyed off partNo. If a partNo has no match in the live
+   catalog, that reliably means it's NSS/O·L (not sold separately / obtain
+   locally) for this project.
+
+   Do not hand-edit this file per catalog page — it's identical for every
+   section. Per-section data lives inline in each widget's own small
+   <script> block that calls IngersollWidgetInit().
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------- */
+/* Shared live-catalog module — ONE instance for the whole page, however  */
+/* many catalog-section widgets are stacked on it.                       */
+/* ---------------------------------------------------------------------- */
+window.IngersollCatalog = window.IngersollCatalog || (function () {
+  var cache = null;
+  var byNamePrefix = {};
+  var bySku = {};
+  var loadPromise = null;
+
+  function normalize(s) {
+    return (s || '').toString().trim().toUpperCase().replace(/\s+/g, '');
+  }
+
+  // Pull the leading part-number token off a product name like
+  // "C20738 GASKET - COVER TO VALVE PLATE - ONAN 149-1323" -> "C20738"
+  function namePrefixPartNo(name) {
+    if (!name) return '';
+    var firstToken = name.trim().split(/\s+/)[0];
+    return normalize(firstToken);
+  }
+
+  function indexItems(items) {
+    byNamePrefix = {};
+    bySku = {};
+    items.forEach(function (item) {
+      var d = item && item.data;
+      if (!d) return;
+      var prefixKey = namePrefixPartNo(d.name);
+      if (prefixKey) byNamePrefix[prefixKey] = item;
+      var skuKey = normalize(d.sku);
+      if (skuKey) bySku[skuKey] = item;
+    });
+  }
+
+  function fetchAllPages() {
+    return new Promise(function (resolve, reject) {
+      dmAPI.runOnReady('ingersollCatalogFetch', function () {
+        dmAPI.loadCollectionsAPI().then(function (api) {
+          return api.storeData('catalog_product').pageSize(100).pageNumber(0).get();
+        }).then(function (firstPage) {
+          var totalPages = (firstPage.page && firstPage.page.totalPages) || 1;
+          var allValues = (firstPage.values || []).slice();
+
+          if (totalPages <= 1) {
+            resolve(allValues);
+            return;
+          }
+
+          var pagePromises = [];
+          for (var p = 1; p < totalPages; p++) {
+            (function (pageNum) {
+              pagePromises.push(
+                dmAPI.loadCollectionsAPI().then(function (api) {
+                  return api.storeData('catalog_product').pageSize(100).pageNumber(pageNum).get();
+                })
+              );
+            })(p);
+          }
+
+          Promise.all(pagePromises).then(function (pages) {
+            pages.forEach(function (pg) {
+              if (pg && pg.values) allValues.push.apply(allValues, pg.values);
+            });
+            resolve(allValues);
+          }).catch(reject);
+        }).catch(reject);
+      });
+    });
+  }
+
+  function load() {
+    if (loadPromise) return loadPromise;
+    loadPromise = fetchAllPages().then(function (items) {
+      cache = items;
+      indexItems(items);
+      return items;
+    });
+    return loadPromise;
+  }
+
+  // Returns { found, name, description, price, status, url } or null.
+  // null reliably means NSS/O·L for this project (see note above).
+  function lookup(partNo) {
+    if (!cache) return null;
+    var key = normalize(partNo);
+    if (!key) return null;
+
+    var item = byNamePrefix[key] || bySku[key];
+
+    if (!item) {
+      item = cache.find(function (it) {
+        var d = it && it.data;
+        if (!d) return false;
+        return normalize(d.name).indexOf(key) !== -1 ||
+               normalize(d.description).indexOf(key) !== -1;
+      });
+    }
+
+    if (!item || !item.data) return null;
+
+    var d = item.data;
+    return {
+      found: true,
+      name: d.name,
+      description: d.description,
+      price: typeof d.price === 'number' ? d.price : null,
+      status: d.stock_status || null,
+      url: item.page_item_url || null
+    };
+  }
+
+  return { load: load, lookup: lookup };
+})();
+
+/* ---------------------------------------------------------------------- */
+/* Per-widget rendering logic — call once per widget instance, passing   */
+/* that widget's own root element, hotspots array, and footnotes text.   */
+/* ---------------------------------------------------------------------- */
+window.IngersollWidgetInit = function (root, hotspots, footnotesText) {
+  let catalogLoaded = false;
+  let activeRef = null;
+  let hoveredIndex = null; // which hotspot (by array index) the cursor is over, for the zoom preview to highlight
+
+  // Normalize every hotspot to always have a `variants` array internally,
+  // so the rest of the code only has to handle one shape.
+  function normalizedVariants(h) {
+    if (h.variants && h.variants.length) return h.variants;
+    return [{
+      serialNote: null,
+      partNo: h.partNo,
+      desc: h.desc
+    }];
+  }
+
+  // Merges live catalog data onto a variant, non-destructively. Before
+  // IngersollCatalog.load() resolves, live is null and isInStock is false;
+  // the rendering functions show a "checking stock" state in that window.
+  function withLive(v) {
+    const live = window.IngersollCatalog.lookup(v.partNo);
+    return Object.assign({}, v, {
+      live: live,
+      isInStock: !!live && live.status === 'IN_STOCK'
+    });
+  }
+
+  // A hotspot is "out of stock" for dot-coloring purposes only once the
+  // catalog has finished loading AND every variant came back unavailable.
+  // Before that, dots render in their normal color rather than flashing.
+  function hotspotIsOut(h) {
+    if (!catalogLoaded) return false;
+    return normalizedVariants(h).map(withLive).every(v => !v.isInStock);
+  }
+
+  function buildHotspots() {
+    const wrap = root.querySelector('.diagram-wrap');
+    wrap.querySelectorAll('.hotspot').forEach(e => e.remove());
+
+    hotspots.forEach((h, idx) => {
+      const dot = document.createElement('div');
+      const variants = normalizedVariants(h);
+      dot.className = 'hotspot' + (hotspotIsOut(h) ? ' is-out' : '') + (variants.length > 1 ? ' has-variants' : '');
+      dot.dataset.hsRef = h.ref;
+      dot.dataset.hsIndex = idx;
+      dot.textContent = h.ref;
+      dot.style.left = h.x + '%';
+      dot.style.top = h.y + '%';
+
+      dot.addEventListener('mouseenter', (e) => { showTooltip(e, h); hoveredIndex = idx; refreshZoomDots(); });
+      dot.addEventListener('mouseleave', () => { hideTooltip(); hoveredIndex = null; refreshZoomDots(); });
+      dot.addEventListener('click', () => selectPart(h.ref));
+
+      wrap.appendChild(dot);
+      sizeHotspot(dot);
+    });
+  }
+
+  // Keeps the mirrored dots inside the zoom preview in sync with which
+  // hotspot (if any) the cursor is currently over. Called whenever hover
+  // state changes AND every time the zoom preview repositions itself.
+  function refreshZoomDots() {
+    const zpDots = root.querySelectorAll('.zp-dot');
+    zpDots.forEach(d => d.classList.toggle('zp-active', Number(d.dataset.hsIndex) === hoveredIndex));
+  }
+
+  function sizeHotspot(el) {
+    const wrapWidth = root.querySelector('.diagram-wrap').offsetWidth;
+    // 2.16% of a normal-width diagram looks right, but the same percentage
+    // on a narrow diagram (e.g. the tall, skinny ring/piston pages) shrinks
+    // to an illegible sliver. Clamp to a sensible min/max instead of pure
+    // percentage scaling, so every diagram gets a legible, clickable dot.
+    const size = Math.min(32, Math.max(18, wrapWidth * 0.0216));
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
+    el.style.fontSize = Math.max(9, size * 0.4) + 'px';
+  }
+
+  new ResizeObserver(() => root.querySelectorAll('.hotspot').forEach(sizeHotspot))
+    .observe(root.querySelector('.diagram-wrap'));
+
+  // Magnifier lens: lets people read fine print / closely-packed ref numbers
+  // without needing the whole diagram to be huge. Works with mouse hover
+  // (desktop) and touch drag (mobile/tablet).
+  function initMagnifier() {
+    const wrap = root.querySelector('.diagram-wrap');
+    const img = root.querySelector('.diagram-img');
+    const preview = root.querySelector('.zoom-preview');
+    const zpDotsContainer = root.querySelector('.zp-dots');
+    const hint = root.querySelector('.mag-hint');
+    const ZOOM = 2.5;
+    let hintShown = false;
+
+    // Mirror every hotspot as a small dot inside the zoom preview, in the
+    // same left-to-right order as the real dots (so array index lines up
+    // with dataset.hsIndex on the real dots for highlight matching).
+    hotspots.forEach((h, idx) => {
+      const zd = document.createElement('div');
+      zd.className = 'zp-dot';
+      zd.textContent = h.ref;
+      zd.dataset.hsIndex = idx;
+      zpDotsContainer.appendChild(zd);
+    });
+
+    // The zoomed view lives in a FIXED spot in the parts panel, not floating
+    // over the cursor - a floating lens covers exactly the dot you're trying
+    // to click, and can run off-screen near the edges of the diagram. A
+    // fixed preview area never overlaps anything you need to interact with.
+    function updateLens(clientX, clientY) {
+      const imgRect = img.getBoundingClientRect();
+      const x = clientX - imgRect.left;
+      const y = clientY - imgRect.top;
+
+      if (x < 0 || y < 0 || x > imgRect.width || y > imgRect.height) {
+        preview.classList.remove('active');
+        return;
+      }
+      if (!hintShown) { hint.classList.add('hidden'); hintShown = true; }
+
+      preview.classList.add('active');
+      const pw = preview.offsetWidth, ph = preview.offsetHeight;
+      const bgX = pw / 2 - x * ZOOM;
+      const bgY = ph / 2 - y * ZOOM;
+      preview.style.backgroundImage = `url(${img.src})`;
+      preview.style.backgroundSize = `${imgRect.width * ZOOM}px ${imgRect.height * ZOOM}px`;
+      preview.style.backgroundPosition = `${bgX}px ${bgY}px`;
+
+      // Reposition every mirrored dot to match the current pan/zoom, hiding
+      // any that have panned outside the visible preview area, and light up
+      // whichever one the cursor is actually over on the real diagram -
+      // this is what lets someone confirm they've got the right ref number
+      // before clicking, rather than guessing from a tightly-packed cluster.
+      hotspots.forEach((h, idx) => {
+        const zd = zpDotsContainer.children[idx];
+        const dotX = (h.x / 100) * imgRect.width * ZOOM + bgX;
+        const dotY = (h.y / 100) * imgRect.height * ZOOM + bgY;
+        if (dotX < -12 || dotX > pw + 12 || dotY < -12 || dotY > ph + 12) {
+          zd.style.display = 'none';
+        } else {
+          zd.style.display = 'flex';
+          zd.style.left = dotX + 'px';
+          zd.style.top = dotY + 'px';
+        }
+        zd.classList.toggle('zp-active', idx === hoveredIndex);
+      });
+    }
+
+    function hideLens() { preview.classList.remove('active'); }
+
+    // Listeners go on `wrap` (the container), NOT the image - the image has
+    // pointer-events:none (so clicks reach the hotspot dots layered on top
+    // of it), which means it can never itself receive mouse/touch events.
+    // The wrap container sits underneath everything and correctly receives
+    // bubbled events regardless of which child (image or a dot) the cursor
+    // is actually over.
+    wrap.addEventListener('mousemove', (e) => updateLens(e.clientX, e.clientY));
+    wrap.addEventListener('mouseleave', hideLens);
+
+    wrap.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      updateLens(t.clientX, t.clientY);
+    }, { passive: true });
+    wrap.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      updateLens(t.clientX, t.clientY);
+    }, { passive: true });
+    wrap.addEventListener('touchend', hideLens);
+
+    // Auto-hide the hint after a few seconds even if never touched, so it
+    // doesn't linger as clutter on a page a customer is just skimming.
+    setTimeout(() => hint.classList.add('hidden'), 4000);
+  }
+  initMagnifier();
+
+  function showTooltip(e, h) {
+    const tt = root.querySelector('.tooltip');
+    const panel = root.querySelector('.diagram-panel');
+    const pr = panel.getBoundingClientRect();
+    const dot = e.target.getBoundingClientRect();
+
+    const variants = normalizedVariants(h).map(withLive);
+    const body = variants.map(v => {
+      const serialLine = v.serialNote ? `<div class="tt-serial">${v.serialNote}</div>` : '';
+      let statusLine;
+      if (!catalogLoaded) {
+        statusLine = '<div class="tt-status pending">Checking stock…</div>';
+      } else if (v.isInStock) {
+        statusLine = '<div class="tt-status in">In Stock' + (v.live.price != null ? ' — $' + v.live.price.toFixed(2) : '') + '</div>';
+      } else {
+        statusLine = '<div class="tt-status out">' + (v.live ? 'Out of Stock' : 'Not Sold Sep. / Obtain Locally') + '</div>';
+      }
+      return `<div class="tt-variant">${serialLine}<div style="font-weight:700">${v.desc}</div><div class="tt-part">${v.partNo}</div>${statusLine}</div>`;
+    }).join('');
+
+    tt.innerHTML = `<div class="tt-ref">REF. ${h.ref}</div>${body}`;
+
+    let left = dot.left - pr.left + dot.width / 2;
+    let top = dot.top - pr.top - 8 + panel.scrollTop;
+
+    tt.style.left = left + 'px';
+    tt.style.top = top + 'px';
+    tt.style.transform = 'translate(-50%, -100%)';
+    tt.classList.add('visible');
+  }
+
+  function hideTooltip() {
+    root.querySelector('.tooltip').classList.remove('visible');
+  }
+
+  function selectPart(ref) {
+    if (activeRef !== null) {
+      root.querySelector('.hotspot[data-hs-ref="' + activeRef + '"]')?.classList.remove('active');
+      root.querySelectorAll('.parts-row[data-ref="' + activeRef + '"]').forEach(r => r.classList.remove('active'));
+    }
+    activeRef = ref;
+    root.querySelector('.hotspot[data-hs-ref="' + ref + '"]')?.classList.add('active');
+    const rows = root.querySelectorAll('.parts-row[data-ref="' + ref + '"]');
+    rows.forEach(r => r.classList.add('active'));
+    if (rows[0]) rows[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Builds the ENTIRE parts table from `hotspots` — this is the single
+  // source of truth. There is no separate hardcoded table markup anywhere,
+  // so the table and the hotspot data can never drift out of sync with
+  // each other.
+  function renderTable() {
+    const tbody = root.querySelector('.parts-tbody');
+    tbody.innerHTML = '';
+
+    hotspots.forEach(h => {
+      const variants = normalizedVariants(h).map(withLive);
+      variants.forEach((v, i) => {
+        const tr = document.createElement('tr');
+        tr.className = 'parts-row' + (i > 0 ? ' variant-row' : '') + (catalogLoaded && !v.isInStock ? ' row-out' : '');
+        tr.dataset.ref = h.ref;
+        tr.onclick = () => selectPart(h.ref);
+
+        const refCell = i === 0 ? `<td class="ref-cell" rowspan="${variants.length}">${h.ref}</td>` : '';
+        const serialCell = `<td class="serial-cell">${v.serialNote || ''}</td>`;
+        const partnoCell = `<td class="partno-cell">${v.partNo}</td>`;
+        const descCell = `<td class="desc-cell">${v.desc}${v.live && v.live.price != null ? ` <span class="price">$${v.live.price.toFixed(2)}</span>` : ''}</td>`;
+
+        let btnCell;
+        if (!catalogLoaded) {
+          btnCell = `<td class="btn-cell"><span class="stock-btn pending">Checking…</span></td>`;
+        } else if (v.isInStock && v.live.url) {
+          btnCell = `<td class="btn-cell"><a href="${v.live.url}" class="add-btn" target="_blank" onclick="event.stopPropagation()">Add to Cart</a></td>`;
+        } else {
+          const label = v.live ? 'Out of Stock' : 'Not Sold Sep.';
+          btnCell = `<td class="btn-cell"><span class="stock-btn">${label}</span></td>`;
+        }
+
+        tr.innerHTML = refCell + serialCell + partnoCell + descCell + btnCell;
+        tbody.appendChild(tr);
+      });
+    });
+  }
+
+  function renderFootnotes() {
+    const box = root.querySelector('.footnotes-box');
+    const text = root.querySelector('.footnotes-text');
+    if (!footnotesText || !footnotesText.trim()) {
+      box.classList.add('empty');
+      return;
+    }
+    text.textContent = footnotesText;
+    box.classList.remove('empty');
+  }
+
+  // Initial render happens immediately using only the static PDF-sourced
+  // data (ref/x/y/partNo/desc), so the widget is usable the instant it
+  // loads. Once the shared live Duda catalog resolves, everything
+  // re-renders in place with real stock status, price, and Add-to-Cart
+  // links merged in.
+  buildHotspots();
+  renderTable();
+  renderFootnotes();
+
+  window.IngersollCatalog.load().then(() => {
+    catalogLoaded = true;
+    buildHotspots();
+    renderTable();
+  }).catch(err => {
+    console.error('IngersollCatalog failed to load — stock status unavailable this session.', err);
+  });
+};
