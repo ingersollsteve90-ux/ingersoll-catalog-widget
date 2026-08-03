@@ -159,6 +159,60 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
 })();
 
 /* ---------------------------------------------------------------------- */
+/* Cart-refresh banner — ONE instance for the whole page, however many   */
+/* catalog-section widgets are stacked on it.                            */
+/* --------------------------------------------------------------------- */
+/* Snipcart (this site's cart provider) doesn't push live updates into    */
+/* tabs that were already open when an item was added elsewhere — this   */
+/* is normal cross-tab browser behavior, not something we can safely      */
+/* override from outside Snipcart's own code. Instead, offer an easy,    */
+/* OPTIONAL one-click refresh right when it's likely to matter: after     */
+/* the person returns to this tab having been away for a while (e.g.      */
+/* they opened a product page in a new tab, added to cart, and came      */
+/* back). Never forces a reload on its own — that would be jarring if    */
+/* someone's mid-scroll or has a part selected.                         */
+window.IngersollCartRefreshBanner = window.IngersollCartRefreshBanner || (function () {
+  var HIDDEN_THRESHOLD_MS = 15000; // only prompt if away for 15s+
+  var hiddenAt = null;
+  var banner = null;
+
+  function buildBanner() {
+    var el = document.createElement('div');
+    el.setAttribute('style',
+      'position:fixed;top:0;left:0;right:0;z-index:99999;' +
+      'background:#1A1A1A;color:#F5F3EE;font-family:Georgia,serif;' +
+      'padding:10px 16px;text-align:center;font-size:14px;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.3);'
+    );
+    el.innerHTML =
+      'Welcome back — refresh to see your current cart and stock levels. ' +
+      '<button type="button" style="margin-left:10px;padding:4px 12px;' +
+      'background:#C8221A;color:#fff;border:none;border-radius:3px;' +
+      'font-size:13px;cursor:pointer;">Refresh Now</button>' +
+      '<span style="margin-left:10px;cursor:pointer;opacity:.7;" title="Dismiss">✕</span>';
+    el.querySelector('button').addEventListener('click', function () {
+      location.reload();
+    });
+    el.lastElementChild.addEventListener('click', function () {
+      el.remove();
+      banner = null;
+    });
+    document.body.appendChild(el);
+    return el;
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+    } else if (hiddenAt && Date.now() - hiddenAt > HIDDEN_THRESHOLD_MS && !banner) {
+      banner = buildBanner();
+    }
+  });
+
+  return {};
+})();
+
+/* ---------------------------------------------------------------------- */
 /* Per-widget rendering logic — call once per widget instance, passing   */
 /* that widget's own root element, hotspots array, and footnotes text.   */
 /* ---------------------------------------------------------------------- */
