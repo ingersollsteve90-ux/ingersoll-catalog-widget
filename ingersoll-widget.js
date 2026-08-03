@@ -148,7 +148,10 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
       description: d.description,
       price: typeof d.price === 'number' ? d.price : null,
       status: d.stock_status || null,
-      url: item.page_item_url || null
+      // Duda's Store API has no "page_item_url" field (that assumption was
+      // wrong and caused every Add to Cart link to 404). The real product
+      // page path is built from seo_url, prefixed with /product/.
+      url: d.seo_url ? ('/product/' + d.seo_url) : null
     };
   }
 
