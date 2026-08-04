@@ -177,34 +177,57 @@ window.IngersollCartRefreshBanner = window.IngersollCartRefreshBanner || (functi
   var banner = null;
 
   function buildBanner() {
-    var el = document.createElement('div');
-    el.setAttribute('style',
-      'position:fixed;top:0;left:0;right:0;z-index:99999;' +
-      'background:#1A1A1A;color:#F5F3EE;font-family:Georgia,serif;' +
-      'padding:10px 16px;text-align:center;font-size:14px;' +
-      'box-shadow:0 2px 8px rgba(0,0,0,.3);'
+    // A dimmed backdrop plus a centered card is much harder to miss than
+    // a top bar, which can blend into other notification bars/headers.
+    var backdrop = document.createElement('div');
+    backdrop.setAttribute('style',
+      'position:fixed;inset:0;z-index:99998;' +
+      'background:rgba(0,0,0,.45);'
     );
-    el.innerHTML =
-      'Welcome back — refresh to see your current cart and stock levels. ' +
-      '<button type="button" style="margin-left:10px;padding:4px 12px;' +
-      'background:#C8221A;color:#fff;border:none;border-radius:3px;' +
-      'font-size:13px;cursor:pointer;">Refresh Now</button>' +
-      '<span style="margin-left:10px;cursor:pointer;opacity:.7;" title="Dismiss">✕</span>';
-    el.querySelector('button').addEventListener('click', function () {
+
+    var card = document.createElement('div');
+    card.setAttribute('style',
+      'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);' +
+      'z-index:99999;background:#1A1A1A;color:#F5F3EE;' +
+      'font-family:Georgia,serif;padding:28px 32px;text-align:center;' +
+      'font-size:16px;line-height:1.5;border-radius:8px;max-width:360px;' +
+      'box-shadow:0 8px 32px rgba(0,0,0,.5);'
+    );
+    card.innerHTML =
+      '<div style="margin-bottom:16px;">Welcome back — refresh to see your current cart and stock levels.</div>' +
+      '<button type="button" style="padding:8px 20px;' +
+      'background:#C8221A;color:#fff;border:none;border-radius:4px;' +
+      'font-size:15px;cursor:pointer;">Refresh Now</button>' +
+      '<div style="margin-top:14px;cursor:pointer;opacity:.7;font-size:13px;text-decoration:underline;">Dismiss</div>';
+
+    card.querySelector('button').addEventListener('click', function () {
       location.reload();
     });
-    el.lastElementChild.addEventListener('click', function () {
-      el.remove();
+    var dismiss = function () {
+      card.remove();
+      backdrop.remove();
       banner = null;
-    });
-    document.body.appendChild(el);
-    return el;
+    };
+    card.lastElementChild.addEventListener('click', dismiss);
+    backdrop.addEventListener('click', dismiss);
+
+    document.body.appendChild(backdrop);
+    document.body.appendChild(card);
+    return card;
   }
 
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       hiddenAt = Date.now();
-    } else if (hiddenAt && Date.now() - hiddenAt > HIDDEN_THRESHOLD_MS && !banner) {
+    } else if (
+      hiddenAt &&
+      Date.now() - hiddenAt > HIDDEN_THRESHOLD_MS &&
+      !banner &&
+      // This script loads on every page via Body End HTML, not just
+      // catalog pages, so only show the banner where it's actually
+      // relevant: pages that have a catalog widget on them.
+      document.querySelector('.ingersoll-catalog-widget')
+    ) {
       banner = buildBanner();
     }
   });
