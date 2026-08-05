@@ -239,7 +239,164 @@ window.IngersollCartRefreshBanner = window.IngersollCartRefreshBanner || (functi
 /* Per-widget rendering logic — call once per widget instance, passing   */
 /* that widget's own root element, hotspots array, and footnotes text.   */
 /* ---------------------------------------------------------------------- */
-window.IngersollWidgetInit = function (root, hotspots, footnotesText) {
+/* ---------------------------------------------------------------------- */
+/* Catalog navigation — ONE persistent bar for the whole page. Every      */
+/* section widget registers itself (title + its own root element) on     */
+/* load, so the prev/next arrows and the section index dropdown build     */
+/* themselves correctly regardless of how many sections are on the page. */
+/* --------------------------------------------------------------------- */
+window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
+  var sections = []; // { title, root }
+  var currentIndex = 0;
+  var bar, dropdown, prevBtn, nextBtn, toggleBtn, observer;
+
+  function styleNavButton(btn) {
+    btn.style.cssText =
+      'background:none;border:1px solid rgba(255,255,255,.35);color:#F5F3EE;' +
+      'padding:7px 14px;border-radius:4px;cursor:pointer;font-family:Georgia,serif;' +
+      'font-size:13px;max-width:36%;overflow:hidden;text-overflow:ellipsis;' +
+      'white-space:nowrap;';
+  }
+
+  function buildUI() {
+    bar = document.createElement('div');
+    bar.setAttribute('style',
+      'position:fixed;bottom:0;left:0;right:0;z-index:99997;' +
+      'background:#2D2E32;color:#F5F3EE;font-family:Georgia,serif;' +
+      'display:flex;align-items:center;justify-content:space-between;' +
+      'padding:10px 20px;box-shadow:0 -2px 10px rgba(0,0,0,.35);gap:10px;'
+    );
+
+    prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    styleNavButton(prevBtn);
+    prevBtn.addEventListener('click', function () {
+      if (currentIndex > 0) scrollToSection(currentIndex - 1);
+    });
+
+    toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.textContent = '☰ Sections';
+    styleNavButton(toggleBtn);
+    toggleBtn.style.maxWidth = 'none';
+    toggleBtn.style.flex = '0 0 auto';
+    toggleBtn.addEventListener('click', function () {
+      var showing = dropdown.style.display === 'block';
+      dropdown.style.display = showing ? 'none' : 'block';
+      if (!showing) renderDropdown();
+    });
+
+    nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    styleNavButton(nextBtn);
+    nextBtn.addEventListener('click', function () {
+      if (currentIndex < sections.length - 1) scrollToSection(currentIndex + 1);
+    });
+
+    bar.appendChild(prevBtn);
+    bar.appendChild(toggleBtn);
+    bar.appendChild(nextBtn);
+    document.body.appendChild(bar);
+
+    dropdown = document.createElement('div');
+    dropdown.setAttribute('style',
+      'position:fixed;bottom:54px;left:50%;transform:translateX(-50%);' +
+      'z-index:99997;background:#fff;border-radius:8px;' +
+      'box-shadow:0 6px 24px rgba(0,0,0,.35);max-height:60vh;overflow-y:auto;' +
+      'display:none;min-width:300px;max-width:90vw;font-family:Georgia,serif;'
+    );
+    document.body.appendChild(dropdown);
+
+    document.addEventListener('click', function (e) {
+      if (dropdown.style.display === 'block' &&
+          !dropdown.contains(e.target) && e.target !== toggleBtn) {
+        dropdown.style.display = 'none';
+      }
+    });
+  }
+
+  function renderDropdown() {
+    dropdown.innerHTML = '';
+    sections.forEach(function (s, i) {
+      var item = document.createElement('div');
+      item.textContent = s.title;
+      var active = i === currentIndex;
+      item.setAttribute('style',
+        'padding:11px 18px;cursor:pointer;border-bottom:1px solid #eee;' +
+        'font-size:13px;color:#1A1A1A;' +
+        (active ? 'background:#F5F3EE;font-weight:700;' : '')
+      );
+      item.addEventListener('mouseenter', function () { item.style.background = '#F5F3EE'; });
+      item.addEventListener('mouseleave', function () { item.style.background = active ? '#F5F3EE' : ''; });
+      item.addEventListener('click', function () {
+        scrollToSection(i);
+        dropdown.style.display = 'none';
+      });
+      dropdown.appendChild(item);
+    });
+  }
+
+  function scrollToSection(i) {
+    sections[i].root.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function updateButtons() {
+    if (currentIndex > 0) {
+      prevBtn.textContent = '← ' + sections[currentIndex - 1].title;
+      prevBtn.style.visibility = 'visible';
+    } else {
+      prevBtn.style.visibility = 'hidden';
+    }
+    if (currentIndex < sections.length - 1) {
+      nextBtn.textContent = sections[currentIndex + 1].title + ' →';
+      nextBtn.style.visibility = 'visible';
+    } else {
+      nextBtn.style.visibility = 'hidden';
+    }
+  }
+
+  function setupObserver() {
+    if (observer) observer.disconnect();
+    observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+          var idx = sections.findIndex(function (s) { return s.root === entry.target; });
+          if (idx !== -1 && idx !== currentIndex) {
+            currentIndex = idx;
+            updateButtons();
+            if (dropdown.style.display === 'block') renderDropdown();
+          }
+        }
+      });
+    }, { threshold: [0.5] });
+    sections.forEach(function (s) { observer.observe(s.root); });
+  }
+
+  // Called once per widget, as each section initializes. Sections may
+  // register slightly out of order relative to on-screen position if
+  // their scripts happen to resolve at different times, so keep the
+  // list sorted by each root's actual position in the document.
+  function register(title, root) {
+    if (!bar) buildUI();
+    sections.push({ title: title, root: root });
+    sections.sort(function (a, b) {
+      return a.root.compareDocumentPosition(b.root) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+    });
+    setupObserver();
+    updateButtons();
+  }
+
+  return { register: register };
+})();
+
+/* ---------------------------------------------------------------------- */
+/* Per-widget rendering logic — call once per widget instance, passing   */
+/* that widget's own root element, hotspots array, footnotes text, and    */
+/* section title (used for the shared prev/next nav + section index).    */
+/* ---------------------------------------------------------------------- */
+window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTitle) {
+  window.IngersollCatalogNav.register(sectionTitle, root);
+
   let catalogLoaded = false;
   let activeRef = null;
   let hoveredIndex = null; // which hotspot (by array index) the cursor is over, for the zoom preview to highlight
