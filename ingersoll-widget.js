@@ -305,6 +305,35 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText) {
     zpDots.forEach(d => d.classList.toggle('zp-active', Number(d.dataset.hsIndex) === hoveredIndex));
   }
 
+  // Sizes the diagram to fit the available panel space as large as
+  // possible while preserving its aspect ratio, tightly hugging the
+  // rendered image (critical: hotspot dots are positioned as % of
+  // .diagram-wrap, so wrap must always exactly match the image's own
+  // rendered bounding box, never a padded/letterboxed container).
+  //
+  // This is done with real measured pixel values rather than CSS
+  // percentages deliberately: percentage height only resolves against
+  // an ancestor with an explicit (non-auto-derived) height, and every
+  // pure-CSS approach tried here (flex, grid, aspect-ratio) reintroduced
+  // that same ambiguity in a different guise. Measuring directly with
+  // JS and setting explicit px values sidesteps the issue entirely.
+  function sizeDiagramContainer() {
+    const panel = root.querySelector('.diagram-panel');
+    const wrap = root.querySelector('.diagram-wrap');
+    const img = root.querySelector('.diagram-img');
+    const cs = getComputedStyle(panel);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const availW = panel.clientWidth - padX;
+    const availH = panel.clientHeight - padY;
+    wrap.style.maxWidth = availW + 'px';
+    wrap.style.maxHeight = availH + 'px';
+    img.style.maxWidth = availW + 'px';
+    img.style.maxHeight = availH + 'px';
+  }
+  sizeDiagramContainer();
+  new ResizeObserver(sizeDiagramContainer).observe(root.querySelector('.diagram-panel'));
+
   function sizeHotspot(el) {
     const wrapWidth = root.querySelector('.diagram-wrap').offsetWidth;
     // 2.16% of a normal-width diagram looks right, but the same percentage
