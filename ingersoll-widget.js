@@ -240,87 +240,50 @@ window.IngersollCartRefreshBanner = window.IngersollCartRefreshBanner || (functi
 /* that widget's own root element, hotspots array, and footnotes text.   */
 /* ---------------------------------------------------------------------- */
 /* ---------------------------------------------------------------------- */
-/* Catalog navigation — ONE persistent bar for the whole page. Every      */
-/* section widget registers itself (title + its own root element) on     */
-/* load, so the prev/next arrows and the section index dropdown build     */
-/* themselves correctly regardless of how many sections are on the page. */
-/* --------------------------------------------------------------------- */
+/* Catalog navigation — each section gets its own prev/next + a shared    */
+/* section-index dropdown. The nav bar lives in NORMAL page flow, right   */
+/* below each section's own header (outside the internally-scrolling      */
+/* diagram/parts panels), so it naturally stays visible while that        */
+/* section is on screen and scrolls away with it once you move past —     */
+/* no position:fixed/sticky needed, and no scroll-tracking required,      */
+/* since each section's prev/next is fully known from its own position    */
+/* in the registry, not from "what's currently visible."                  */
+/* ---------------------------------------------------------------------- */
 window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
   var sections = []; // { title, root }
-  var currentIndex = 0;
-  var bar, dropdown, prevBtn, nextBtn, toggleBtn, observer;
+  var dropdown;
 
-  function styleNavButton(btn) {
-    btn.style.cssText =
-      'background:none;border:1px solid rgba(255,255,255,.35);color:#F5F3EE;' +
-      'padding:7px 14px;border-radius:4px;cursor:pointer;font-family:Georgia,serif;' +
-      'font-size:13px;max-width:36%;overflow:hidden;text-overflow:ellipsis;' +
-      'white-space:nowrap;';
-  }
-
-  function buildUI() {
-    bar = document.createElement('div');
-    bar.setAttribute('style',
-      'position:fixed;bottom:0;left:0;right:0;z-index:99997;' +
-      'background:#2D2E32;color:#F5F3EE;font-family:Georgia,serif;' +
-      'display:flex;align-items:center;justify-content:space-between;' +
-      'padding:10px 20px;box-shadow:0 -2px 10px rgba(0,0,0,.35);gap:10px;'
-    );
-
-    prevBtn = document.createElement('button');
-    prevBtn.type = 'button';
-    styleNavButton(prevBtn);
-    prevBtn.addEventListener('click', function () {
-      if (currentIndex > 0) scrollToSection(currentIndex - 1);
-    });
-
-    toggleBtn = document.createElement('button');
-    toggleBtn.type = 'button';
-    toggleBtn.textContent = '☰ Sections';
-    styleNavButton(toggleBtn);
-    toggleBtn.style.maxWidth = 'none';
-    toggleBtn.style.flex = '0 0 auto';
-    toggleBtn.addEventListener('click', function () {
-      var showing = dropdown.style.display === 'block';
-      dropdown.style.display = showing ? 'none' : 'block';
-      if (!showing) renderDropdown();
-    });
-
-    nextBtn = document.createElement('button');
-    nextBtn.type = 'button';
-    styleNavButton(nextBtn);
-    nextBtn.addEventListener('click', function () {
-      if (currentIndex < sections.length - 1) scrollToSection(currentIndex + 1);
-    });
-
-    bar.appendChild(prevBtn);
-    bar.appendChild(toggleBtn);
-    bar.appendChild(nextBtn);
-    document.body.appendChild(bar);
-
+  function buildDropdown() {
     dropdown = document.createElement('div');
     dropdown.setAttribute('style',
-      'position:fixed;bottom:54px;left:50%;transform:translateX(-50%);' +
+      'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);' +
       'z-index:99997;background:#fff;border-radius:8px;' +
-      'box-shadow:0 6px 24px rgba(0,0,0,.35);max-height:60vh;overflow-y:auto;' +
+      'box-shadow:0 6px 24px rgba(0,0,0,.35);max-height:70vh;overflow-y:auto;' +
       'display:none;min-width:300px;max-width:90vw;font-family:Georgia,serif;'
     );
     document.body.appendChild(dropdown);
 
-    document.addEventListener('click', function (e) {
-      if (dropdown.style.display === 'block' &&
-          !dropdown.contains(e.target) && e.target !== toggleBtn) {
-        dropdown.style.display = 'none';
-      }
-    });
+    var backdrop = document.createElement('div');
+    backdrop.setAttribute('style',
+      'position:fixed;inset:0;z-index:99996;background:rgba(0,0,0,.35);display:none;'
+    );
+    document.body.appendChild(backdrop);
+    dropdown.__backdrop = backdrop;
+
+    backdrop.addEventListener('click', closeDropdown);
   }
 
-  function renderDropdown() {
+  function closeDropdown() {
+    dropdown.style.display = 'none';
+    dropdown.__backdrop.style.display = 'none';
+  }
+
+  function renderDropdown(currentRoot) {
     dropdown.innerHTML = '';
-    sections.forEach(function (s, i) {
+    sections.forEach(function (s) {
       var item = document.createElement('div');
       item.textContent = s.title;
-      var active = i === currentIndex;
+      var active = s.root === currentRoot;
       item.setAttribute('style',
         'padding:11px 18px;cursor:pointer;border-bottom:1px solid #eee;' +
         'font-size:13px;color:#1A1A1A;' +
@@ -329,47 +292,46 @@ window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
       item.addEventListener('mouseenter', function () { item.style.background = '#F5F3EE'; });
       item.addEventListener('mouseleave', function () { item.style.background = active ? '#F5F3EE' : ''; });
       item.addEventListener('click', function () {
-        scrollToSection(i);
-        dropdown.style.display = 'none';
+        s.root.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        closeDropdown();
       });
       dropdown.appendChild(item);
     });
   }
 
-  function scrollToSection(i) {
-    sections[i].root.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
+  // Every registered section's own bar reflects its true neighbors, so
+  // this needs to re-run for ALL sections whenever a new one registers
+  // (an earlier section's "next" label may only become known once a
+  // later section finishes loading in).
+  function updateAllBars() {
+    sections.forEach(function (s, i) {
+      var bar = s.root.querySelector('.section-nav-bar');
+      if (!bar) return;
+      var prevBtn = bar.querySelector('.section-nav-prev');
+      var nextBtn = bar.querySelector('.section-nav-next');
 
-  function updateButtons() {
-    if (currentIndex > 0) {
-      prevBtn.textContent = '← ' + sections[currentIndex - 1].title;
-      prevBtn.style.visibility = 'visible';
-    } else {
-      prevBtn.style.visibility = 'hidden';
-    }
-    if (currentIndex < sections.length - 1) {
-      nextBtn.textContent = sections[currentIndex + 1].title + ' →';
-      nextBtn.style.visibility = 'visible';
-    } else {
-      nextBtn.style.visibility = 'hidden';
-    }
-  }
+      if (i > 0) {
+        var prevTarget = sections[i - 1];
+        prevBtn.textContent = '← ' + prevTarget.title;
+        prevBtn.onclick = function () {
+          prevTarget.root.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+      } else {
+        prevBtn.textContent = '';
+        prevBtn.onclick = null;
+      }
 
-  function setupObserver() {
-    if (observer) observer.disconnect();
-    observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
-          var idx = sections.findIndex(function (s) { return s.root === entry.target; });
-          if (idx !== -1 && idx !== currentIndex) {
-            currentIndex = idx;
-            updateButtons();
-            if (dropdown.style.display === 'block') renderDropdown();
-          }
-        }
-      });
-    }, { threshold: [0.5] });
-    sections.forEach(function (s) { observer.observe(s.root); });
+      if (i < sections.length - 1) {
+        var nextTarget = sections[i + 1];
+        nextBtn.textContent = nextTarget.title + ' →';
+        nextBtn.onclick = function () {
+          nextTarget.root.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+      } else {
+        nextBtn.textContent = '';
+        nextBtn.onclick = null;
+      }
+    });
   }
 
   // Called once per widget, as each section initializes. Sections may
@@ -377,13 +339,29 @@ window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
   // their scripts happen to resolve at different times, so keep the
   // list sorted by each root's actual position in the document.
   function register(title, root) {
-    if (!bar) buildUI();
+    if (!dropdown) buildDropdown();
+
     sections.push({ title: title, root: root });
     sections.sort(function (a, b) {
       return a.root.compareDocumentPosition(b.root) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
     });
-    setupObserver();
-    updateButtons();
+
+    var toggleBtn = root.querySelector('.section-nav-toggle');
+    if (toggleBtn && !toggleBtn.dataset.ingersollWired) {
+      toggleBtn.dataset.ingersollWired = 'true';
+      toggleBtn.addEventListener('click', function () {
+        var showing = dropdown.style.display === 'block';
+        if (showing) {
+          closeDropdown();
+        } else {
+          renderDropdown(root);
+          dropdown.style.display = 'block';
+          dropdown.__backdrop.style.display = 'block';
+        }
+      });
+    }
+
+    updateAllBars();
   }
 
   return { register: register };
