@@ -44,6 +44,30 @@
 /* Shared live-catalog module — ONE instance for the whole page, however  */
 /* many catalog-section widgets are stacked on it.                       */
 /* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+/* Mobile layout fix — injected once per page. Every already-pasted       */
+/* section widget carries its own embedded copy of the mobile CSS, baked  */
+/* in at build time. Rather than require re-pasting all of them whenever  */
+/* a shared style bug is found, inject a corrected stylesheet here that   */
+/* naturally overrides the embedded copies (later same-specificity rules  */
+/* win the cascade) — this one file update fixes every section already   */
+/* on the page, old and new, with no re-pasting needed.                   */
+/* --------------------------------------------------------------------- */
+(function () {
+  if (window.__ingersollMobileFixInjected) return;
+  window.__ingersollMobileFixInjected = true;
+
+  var style = document.createElement('style');
+  style.textContent =
+    '@media(max-width:768px){' +
+    '.ingersoll-catalog-widget{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;}' +
+    '.spread{flex-direction:column!important;overflow:visible!important;min-height:0!important;}' +
+    '.diagram-panel{flex:0 0 auto!important;width:100%!important;height:60vh!important;min-height:350px!important;max-height:550px!important;border-right:none!important;border-bottom:2px solid #D9D4C8!important;}' +
+    '.parts-panel{flex:0 0 auto!important;overflow-y:visible!important;max-height:none!important;}' +
+    '}';
+  document.head.appendChild(style);
+})();
+
 window.IngersollCatalog = window.IngersollCatalog || (function () {
   var cache = null;
   var byNamePrefix = {};
