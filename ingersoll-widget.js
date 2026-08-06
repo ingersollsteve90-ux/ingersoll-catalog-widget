@@ -289,6 +289,19 @@ window.IngersollCartRefreshBanner = window.IngersollCartRefreshBanner || (functi
     }
   });
 
+  // Add to Cart now navigates in the same tab (no target="_blank"), so the
+  // most common return path is the browser's own Back button rather than
+  // switching tabs. Back-navigation often restores the page instantly from
+  // the browser's cache (bfcache) instead of reloading it — visibilitychange
+  // doesn't reliably fire for this case since the page was fully navigated
+  // away from, not just hidden. pageshow with event.persisted=true is the
+  // correct signal for "you just came back via Back/Forward."
+  window.addEventListener('pageshow', function (event) {
+    if (event.persisted && !banner && document.querySelector('.ingersoll-catalog-widget')) {
+      banner = buildBanner();
+    }
+  });
+
   return {};
 })();
 
@@ -709,7 +722,7 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
         if (!catalogLoaded) {
           btnCell = `<td class="btn-cell"><span class="stock-btn pending">Checking…</span></td>`;
         } else if (v.isInStock && v.live.url) {
-          btnCell = `<td class="btn-cell"><a href="${v.live.url}" class="add-btn" target="_blank" onclick="event.stopPropagation()">Add to Cart</a></td>`;
+          btnCell = `<td class="btn-cell"><a href="${v.live.url}" class="add-btn" onclick="event.stopPropagation()">Add to Cart</a></td>`;
         } else {
           const label = v.live ? 'Out of Stock' : 'Not Sold Sep.';
           btnCell = `<td class="btn-cell"><span class="stock-btn">${label}</span></td>`;
