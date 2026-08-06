@@ -696,6 +696,13 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     root.querySelector('.hotspot[data-hs-ref="' + ref + '"]')?.classList.add('active');
     const rows = root.querySelectorAll('.parts-row[data-ref="' + ref + '"]');
     rows.forEach(r => r.classList.add('active'));
+
+    // Collapse the magnifier first — it only shows on hover/touch, but if
+    // it's still active right when a part is selected, it sits on top of
+    // the sticky header and can cover the row that's about to scroll into
+    // view underneath it.
+    root.querySelector('.zoom-preview')?.classList.remove('active');
+
     if (rows[0]) rows[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
