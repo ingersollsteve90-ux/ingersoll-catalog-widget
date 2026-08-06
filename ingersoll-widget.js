@@ -291,14 +291,16 @@ window.IngersollCartRefreshBanner = window.IngersollCartRefreshBanner || (functi
 
   // Add to Cart now navigates in the same tab (no target="_blank"), so the
   // most common return path is the browser's own Back button rather than
-  // switching tabs. Back-navigation often restores the page instantly from
-  // the browser's cache (bfcache) instead of reloading it — visibilitychange
-  // doesn't reliably fire for this case since the page was fully navigated
-  // away from, not just hidden. pageshow with event.persisted=true is the
-  // correct signal for "you just came back via Back/Forward."
+  // switching tabs. This is an unambiguous signal (unlike a general tab
+  // switch, which could be for any unrelated reason) — they definitely
+  // navigated away and came back, so auto-refresh here rather than asking.
+  // pageshow with event.persisted=true fires specifically on a bfcache
+  // restore (the instant, no-reload page-restore browsers do on Back),
+  // which visibilitychange alone wouldn't reliably catch since the page
+  // was fully navigated away from, not just hidden.
   window.addEventListener('pageshow', function (event) {
-    if (event.persisted && !banner && document.querySelector('.ingersoll-catalog-widget')) {
-      banner = buildBanner();
+    if (event.persisted && document.querySelector('.ingersoll-catalog-widget')) {
+      location.reload();
     }
   });
 
@@ -694,7 +696,7 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     root.querySelector('.hotspot[data-hs-ref="' + ref + '"]')?.classList.add('active');
     const rows = root.querySelectorAll('.parts-row[data-ref="' + ref + '"]');
     rows.forEach(r => r.classList.add('active'));
-    if (rows[0]) rows[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (rows[0]) rows[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   // Builds the ENTIRE parts table from `hotspots` — this is the single
