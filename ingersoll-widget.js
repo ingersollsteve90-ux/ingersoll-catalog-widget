@@ -229,7 +229,7 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
 /* back). Never forces a reload on its own — that would be jarring if    */
 /* someone's mid-scroll or has a part selected.                         */
 window.IngersollCartRefreshBanner = window.IngersollCartRefreshBanner || (function () {
-  var HIDDEN_THRESHOLD_MS = 8000; // only prompt if away for 8s+
+  var HIDDEN_THRESHOLD_MS = 5000; // only prompt if away for 5s+
   var hiddenAt = null;
   var banner = null;
 
