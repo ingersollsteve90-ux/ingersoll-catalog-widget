@@ -103,7 +103,7 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
     return new Promise(function (resolve, reject) {
       dmAPI.runOnReady('ingersollCatalogFetch', function () {
         dmAPI.loadCollectionsAPI().then(function (api) {
-          return api.storeData('catalog_product').pageSize(100).pageNumber(0).get();
+          return api.storeData('catalog_product').select('name', 'sku', 'price', 'stock_status', 'seo_url').pageSize(100).pageNumber(0).get();
         }).then(function (firstPage) {
           var totalPages = (firstPage.page && firstPage.page.totalPages) || 1;
           var allValues = (firstPage.values || []).slice();
@@ -118,7 +118,7 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
             (function (pageNum) {
               pagePromises.push(
                 dmAPI.loadCollectionsAPI().then(function (api) {
-                  return api.storeData('catalog_product').pageSize(100).pageNumber(pageNum).get();
+                  return api.storeData('catalog_product').select('name', 'sku', 'price', 'stock_status', 'seo_url').pageSize(100).pageNumber(pageNum).get();
                 })
               );
             })(p);
@@ -135,11 +135,44 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
     });
   }
 
+  var CACHE_KEY = 'ingersollCatalogCache_v1';
+  var CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes — long enough to cover a normal browsing session
+
+  function readCache() {
+    try {
+      var raw = sessionStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (Date.now() - parsed.t > CACHE_TTL_MS) return null;
+      return parsed.items;
+    } catch (e) {
+      return null; // storage unavailable/corrupt — just refetch normally
+    }
+  }
+
+  function writeCache(items) {
+    try {
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), items: items }));
+    } catch (e) {
+      // storage full or unavailable — not fatal, just skip caching this time
+    }
+  }
+
   function load() {
     if (loadPromise) return loadPromise;
+
+    var cached = readCache();
+    if (cached) {
+      cache = cached;
+      indexItems(cached);
+      loadPromise = Promise.resolve(cached);
+      return loadPromise;
+    }
+
     loadPromise = fetchAllPages().then(function (items) {
       cache = items;
       indexItems(items);
+      writeCache(items);
       return items;
     });
     return loadPromise;
@@ -490,8 +523,10 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     img.style.maxWidth = availW + 'px';
     img.style.maxHeight = availH + 'px';
   }
-  sizeDiagramContainer();
-  new ResizeObserver(sizeDiagramContainer).observe(root.querySelector('.diagram-panel'));
+  function setupDiagramSizing() {
+    sizeDiagramContainer();
+    new ResizeObserver(sizeDiagramContainer).observe(root.querySelector('.diagram-panel'));
+  }
 
   function sizeHotspot(el) {
     const wrapWidth = root.querySelector('.diagram-wrap').offsetWidth;
@@ -505,8 +540,10 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     el.style.fontSize = Math.max(9, size * 0.4) + 'px';
   }
 
-  new ResizeObserver(() => root.querySelectorAll('.hotspot').forEach(sizeHotspot))
-    .observe(root.querySelector('.diagram-wrap'));
+  function setupHotspotResize() {
+    new ResizeObserver(() => root.querySelectorAll('.hotspot').forEach(sizeHotspot))
+      .observe(root.querySelector('.diagram-wrap'));
+  }
 
   // Magnifier lens: lets people read fine print / closely-packed ref numbers
   // without needing the whole diagram to be huge. Works with mouse hover
@@ -599,7 +636,6 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     // doesn't linger as clutter on a page a customer is just skimming.
     setTimeout(() => hint.classList.add('hidden'), 4000);
   }
-  initMagnifier();
 
   function showTooltip(e, h) {
     const tt = root.querySelector('.tooltip');
@@ -696,20 +732,47 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     box.classList.remove('empty');
   }
 
-  // Initial render happens immediately using only the static PDF-sourced
-  // data (ref/x/y/partNo/desc), so the widget is usable the instant it
-  // loads. Once the shared live Duda catalog resolves, everything
-  // re-renders in place with real stock status, price, and Add-to-Cart
-  // links merged in.
-  buildHotspots();
-  renderTable();
-  renderFootnotes();
+  // Lazy activation: building hundreds of hotspot dots and table rows for
+  // every section immediately (times however many sections are on the
+  // page) is real, avoidable work most of which isn't even visible yet.
+  // Instead, each section activates itself only once it's about to
+  // scroll into view — a generous rootMargin means it's ready well
+  // before you actually reach it, so nothing feels delayed.
+  let activated = false;
+  function activate() {
+    if (activated) return;
+    activated = true;
 
-  window.IngersollCatalog.load().then(() => {
-    catalogLoaded = true;
+    setupDiagramSizing();
+    setupHotspotResize();
+    initMagnifier();
+
+    // Initial render happens immediately using only the static PDF-sourced
+    // data (ref/x/y/partNo/desc), so the widget is usable the instant it
+    // activates. Once the shared live Duda catalog resolves (or resolves
+    // instantly from cache — see IngersollCatalog above), everything
+    // re-renders in place with real stock status, price, and Add-to-Cart
+    // links merged in.
     buildHotspots();
     renderTable();
-  }).catch(err => {
-    console.error('IngersollCatalog failed to load — stock status unavailable this session.', err);
-  });
+    renderFootnotes();
+
+    window.IngersollCatalog.load().then(() => {
+      catalogLoaded = true;
+      buildHotspots();
+      renderTable();
+    }).catch(err => {
+      console.error('IngersollCatalog failed to load — stock status unavailable this session.', err);
+    });
+  }
+
+  const lazyObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        activate();
+        lazyObserver.disconnect();
+      }
+    });
+  }, { rootMargin: '600px 0px 600px 0px' });
+  lazyObserver.observe(root);
 };
