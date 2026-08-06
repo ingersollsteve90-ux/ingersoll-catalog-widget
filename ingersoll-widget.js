@@ -216,101 +216,19 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
 })();
 
 /* ---------------------------------------------------------------------- */
-/* Cart-refresh banner — ONE instance for the whole page, however many   */
-/* catalog-section widgets are stacked on it.                            */
-/* --------------------------------------------------------------------- */
-/* Snipcart (this site's cart provider) doesn't push live updates into    */
-/* tabs that were already open when an item was added elsewhere — this   */
-/* is normal cross-tab browser behavior, not something we can safely      */
-/* override from outside Snipcart's own code. Instead, offer an easy,    */
-/* OPTIONAL one-click refresh right when it's likely to matter: after     */
-/* the person returns to this tab having been away for a while (e.g.      */
-/* they opened a product page in a new tab, added to cart, and came      */
-/* back). Never forces a reload on its own — that would be jarring if    */
-/* someone's mid-scroll or has a part selected.                         */
-window.IngersollCartRefreshBanner = window.IngersollCartRefreshBanner || (function () {
-  var HIDDEN_THRESHOLD_MS = 5000; // only prompt if away for 5s+
-  var hiddenAt = null;
-  var banner = null;
-
-  function buildBanner() {
-    // A dimmed backdrop plus a centered card is much harder to miss than
-    // a top bar, which can blend into other notification bars/headers.
-    var backdrop = document.createElement('div');
-    backdrop.setAttribute('style',
-      'position:fixed;inset:0;z-index:99998;' +
-      'background:rgba(0,0,0,.45);'
-    );
-
-    var card = document.createElement('div');
-    card.setAttribute('style',
-      'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);' +
-      'z-index:99999;background:#1A1A1A;color:#F5F3EE;' +
-      'font-family:Georgia,serif;padding:28px 32px;text-align:center;' +
-      'font-size:16px;line-height:1.5;border-radius:8px;max-width:360px;' +
-      'box-shadow:0 8px 32px rgba(0,0,0,.5);'
-    );
-    card.innerHTML =
-      '<div style="margin-bottom:16px;">Welcome back — refresh to see your current cart and stock levels.</div>' +
-      '<button type="button" style="padding:8px 20px;' +
-      'background:#C8221A;color:#fff;border:none;border-radius:4px;' +
-      'font-size:15px;cursor:pointer;">Refresh Now</button>' +
-      '<div style="margin-top:14px;cursor:pointer;opacity:.7;font-size:13px;text-decoration:underline;">Dismiss</div>';
-
-    card.querySelector('button').addEventListener('click', function () {
-      location.reload();
-    });
-    var dismiss = function () {
-      card.remove();
-      backdrop.remove();
-      banner = null;
-    };
-    card.lastElementChild.addEventListener('click', dismiss);
-    backdrop.addEventListener('click', dismiss);
-
-    document.body.appendChild(backdrop);
-    document.body.appendChild(card);
-    return card;
+/* Auto-refresh on back-button return. Add to Cart navigates in the same */
+/* tab, so the most common return path is the browser's own Back button. */
+/* pageshow with event.persisted=true fires specifically on a bfcache    */
+/* restore (the instant, no-reload page-restore browsers do on Back),    */
+/* which is an unambiguous signal they just came back from adding        */
+/* something to cart, so refresh automatically rather than asking.       */
+/* ------------------------------------------------------------------- */
+window.addEventListener('pageshow', function (event) {
+  if (event.persisted && document.querySelector('.ingersoll-catalog-widget')) {
+    location.reload();
   }
+});
 
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) {
-      hiddenAt = Date.now();
-    } else if (
-      hiddenAt &&
-      Date.now() - hiddenAt > HIDDEN_THRESHOLD_MS &&
-      !banner &&
-      // This script loads on every page via Body End HTML, not just
-      // catalog pages, so only show the banner where it's actually
-      // relevant: pages that have a catalog widget on them.
-      document.querySelector('.ingersoll-catalog-widget')
-    ) {
-      banner = buildBanner();
-    }
-  });
-
-  // Add to Cart now navigates in the same tab (no target="_blank"), so the
-  // most common return path is the browser's own Back button rather than
-  // switching tabs. This is an unambiguous signal (unlike a general tab
-  // switch, which could be for any unrelated reason) — they definitely
-  // navigated away and came back, so auto-refresh here rather than asking.
-  // pageshow with event.persisted=true fires specifically on a bfcache
-  // restore (the instant, no-reload page-restore browsers do on Back),
-  // which visibilitychange alone wouldn't reliably catch since the page
-  // was fully navigated away from, not just hidden.
-  window.addEventListener('pageshow', function (event) {
-    if (event.persisted && document.querySelector('.ingersoll-catalog-widget')) {
-      location.reload();
-    }
-  });
-
-  return {};
-})();
-
-/* ---------------------------------------------------------------------- */
-/* Per-widget rendering logic — call once per widget instance, passing   */
-/* that widget's own root element, hotspots array, and footnotes text.   */
-/* ---------------------------------------------------------------------- */
 /* ---------------------------------------------------------------------- */
 /* Catalog navigation — each section gets its own prev/next + a shared    */
 /* section-index dropdown. The nav bar lives in NORMAL page flow, right   */
