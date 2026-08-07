@@ -241,7 +241,29 @@ window.addEventListener('pageshow', function (event) {
 /* ---------------------------------------------------------------------- */
 window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
   var sections = []; // { title, root }
-  var dropdown;
+  var dropdown, backdrop;
+  var currentPageKey = null;
+
+  // BUGFIX (found while QA'ing catalog A1159): this whole module lives on
+  // `window` behind a `window.X || (...)` guard, which only re-initializes
+  // on a genuine full page reload. Duda's site navigation does not reliably
+  // tear down and recreate the JS context between catalog pages (same root
+  // cause family as the earlier IntersectionObserver issue) — so without
+  // this check, `sections` silently kept accumulating across pages and the
+  // "Sections" dropdown on a freshly-loaded catalog would still show every
+  // section from whichever catalog page was viewed previously in the same
+  // browser session. Comparing location.pathname on every register() call
+  // and wiping stale state when it changes fixes this regardless of
+  // whether the underlying cause is soft-routing, iframe reuse, or
+  // something else Duda-specific.
+  function resetForNewPage(pageKey) {
+    sections = [];
+    if (dropdown && dropdown.parentNode) dropdown.parentNode.removeChild(dropdown);
+    if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+    dropdown = null;
+    backdrop = null;
+    currentPageKey = pageKey;
+  }
 
   function buildDropdown() {
     dropdown = document.createElement('div');
@@ -253,7 +275,7 @@ window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
     );
     document.body.appendChild(dropdown);
 
-    var backdrop = document.createElement('div');
+    backdrop = document.createElement('div');
     backdrop.setAttribute('style',
       'position:fixed;inset:0;z-index:99996;background:rgba(0,0,0,.35);display:none;'
     );
@@ -329,6 +351,8 @@ window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
   // their scripts happen to resolve at different times, so keep the
   // list sorted by each root's actual position in the document.
   function register(title, root) {
+    var pageKey = location.pathname + location.search;
+    if (pageKey !== currentPageKey) resetForNewPage(pageKey);
     if (!dropdown) buildDropdown();
 
     sections.push({ title: title, root: root });
