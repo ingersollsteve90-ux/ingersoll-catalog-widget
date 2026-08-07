@@ -706,13 +706,13 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     });
   }
 
-  const lazyObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        activate();
-        lazyObserver.disconnect();
-      }
-    });
-  }, { rootMargin: '600px 0px 600px 0px' });
-  lazyObserver.observe(root);
+  // NOTE: this used to be gated behind an IntersectionObserver so each
+  // section only built its DOM once scrolled near, instead of all at once
+  // on page load. That was confirmed NOT to work in Duda's actual runtime —
+  // a fresh, minimal IntersectionObserver tested directly on a live page
+  // never fired at all, even after several seconds, on a fully-visible
+  // element. Rather than depend on an API that silently doesn't work here,
+  // activate immediately. The other performance work (leaner field
+  // selection, session-cached catalog fetch) still stands on its own.
+  activate();
 };
