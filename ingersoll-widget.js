@@ -239,31 +239,55 @@ window.addEventListener('pageshow', function (event) {
 /* since each section's prev/next is fully known from its own position    */
 /* in the registry, not from "what's currently visible."                  */
 /* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+/* Shared activation queue — spreads each section's initial DOM build     */
+/* (hotspot dots + parts table rows) across idle time instead of doing    */
+/* ALL sections synchronously in one blocking burst on page load. This is */
+/* NOT visibility-based (unlike the abandoned IntersectionObserver        */
+/* attempt above) — every section still activates, in the same page       */
+/* order as before, just spread out over several idle slices rather than  */
+/* one long main-thread block. On a 60+ section catalog page this is the  */
+/* difference between the tab freezing for a couple seconds vs. the top   */
+/* of the page being interactive almost immediately while the rest        */
+/* finishes in the background. Falls back to setTimeout chunking on       */
+/* browsers without requestIdleCallback (Safari).                         */
+/* ---------------------------------------------------------------------- */
+window.IngersollActivationQueue = window.IngersollActivationQueue || (function () {
+  var queue = [];
+  var scheduled = false;
+
+  function runChunk(deadline) {
+    while (queue.length && (!deadline || deadline.timeRemaining() > 4 || deadline.didTimeout)) {
+      var fn = queue.shift();
+      try { fn(); } catch (e) { console.error('Ingersoll widget: section activation failed', e); }
+    }
+    if (queue.length) {
+      schedule();
+    } else {
+      scheduled = false;
+    }
+  }
+
+  function schedule() {
+    scheduled = true;
+    if (window.requestIdleCallback) {
+      requestIdleCallback(runChunk, { timeout: 200 });
+    } else {
+      setTimeout(function () { runChunk(null); }, 16);
+    }
+  }
+
+  function enqueue(fn) {
+    queue.push(fn);
+    if (!scheduled) schedule();
+  }
+
+  return { enqueue: enqueue };
+})();
+
 window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
   var sections = []; // { title, root }
-  var dropdown, backdrop;
-  var currentPageKey = null;
-
-  // BUGFIX (found while QA'ing catalog A1159): this whole module lives on
-  // `window` behind a `window.X || (...)` guard, which only re-initializes
-  // on a genuine full page reload. Duda's site navigation does not reliably
-  // tear down and recreate the JS context between catalog pages (same root
-  // cause family as the earlier IntersectionObserver issue) — so without
-  // this check, `sections` silently kept accumulating across pages and the
-  // "Sections" dropdown on a freshly-loaded catalog would still show every
-  // section from whichever catalog page was viewed previously in the same
-  // browser session. Comparing location.pathname on every register() call
-  // and wiping stale state when it changes fixes this regardless of
-  // whether the underlying cause is soft-routing, iframe reuse, or
-  // something else Duda-specific.
-  function resetForNewPage(pageKey) {
-    sections = [];
-    if (dropdown && dropdown.parentNode) dropdown.parentNode.removeChild(dropdown);
-    if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-    dropdown = null;
-    backdrop = null;
-    currentPageKey = pageKey;
-  }
+  var dropdown;
 
   function buildDropdown() {
     dropdown = document.createElement('div');
@@ -275,7 +299,7 @@ window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
     );
     document.body.appendChild(dropdown);
 
-    backdrop = document.createElement('div');
+    var backdrop = document.createElement('div');
     backdrop.setAttribute('style',
       'position:fixed;inset:0;z-index:99996;background:rgba(0,0,0,.35);display:none;'
     );
@@ -351,8 +375,6 @@ window.IngersollCatalogNav = window.IngersollCatalogNav || (function () {
   // their scripts happen to resolve at different times, so keep the
   // list sorted by each root's actual position in the document.
   function register(title, root) {
-    var pageKey = location.pathname + location.search;
-    if (pageKey !== currentPageKey) resetForNewPage(pageKey);
     if (!dropdown) buildDropdown();
 
     sections.push({ title: title, root: root });
@@ -517,13 +539,21 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     // Mirror every hotspot as a small dot inside the zoom preview, in the
     // same left-to-right order as the real dots (so array index lines up
     // with dataset.hsIndex on the real dots for highlight matching).
-    hotspots.forEach((h, idx) => {
-      const zd = document.createElement('div');
-      zd.className = 'zp-dot';
-      zd.textContent = h.ref;
-      zd.dataset.hsIndex = idx;
-      zpDotsContainer.appendChild(zd);
-    });
+    // Built lazily on first actual use, not eagerly here — on a large
+    // catalog page, building this for every section on activation roughly
+    // doubles the DOM node count for sections nobody ends up hovering.
+    let zpDotsBuilt = false;
+    function ensureZpDots() {
+      if (zpDotsBuilt) return;
+      zpDotsBuilt = true;
+      hotspots.forEach((h, idx) => {
+        const zd = document.createElement('div');
+        zd.className = 'zp-dot';
+        zd.textContent = h.ref;
+        zd.dataset.hsIndex = idx;
+        zpDotsContainer.appendChild(zd);
+      });
+    }
 
     // The zoomed view lives in a FIXED spot in the parts panel, not floating
     // over the cursor - a floating lens covers exactly the dot you're trying
@@ -538,6 +568,7 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
         preview.classList.remove('active');
         return;
       }
+      ensureZpDots();
       if (!hintShown) { hint.classList.add('hidden'); hintShown = true; }
 
       preview.classList.add('active');
@@ -736,7 +767,11 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
   // a fresh, minimal IntersectionObserver tested directly on a live page
   // never fired at all, even after several seconds, on a fully-visible
   // element. Rather than depend on an API that silently doesn't work here,
-  // activate immediately. The other performance work (leaner field
-  // selection, session-cached catalog fetch) still stands on its own.
-  activate();
+  // every section still activates unconditionally — but now via the shared
+  // IngersollActivationQueue above, which spreads the (potentially 60+)
+  // sections' DOM-building work across idle time instead of doing it all
+  // synchronously in one blocking burst. This is pacing, not visibility —
+  // it doesn't reintroduce the IntersectionObserver failure mode, since
+  // nothing is ever skipped, just spread out.
+  window.IngersollActivationQueue.enqueue(activate);
 };
