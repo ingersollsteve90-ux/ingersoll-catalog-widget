@@ -775,3 +775,95 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
   // nothing is ever skipped, just spread out.
   window.IngersollActivationQueue.enqueue(activate);
 };
+
+/* ---------------------------------------------------------------------- */
+/* Fetch-based entry point — loads a section's hotspots/footnotes from an */
+/* external JSON URL instead of requiring them inlined in the widget's    */
+/* own <script> block. This is ADDITIVE and fully backward-compatible:    */
+/* window.IngersollWidgetInit above is completely unchanged, so every     */
+/* already-pasted widget (which calls it directly with a literal          */
+/* hotspots array) keeps working forever, untouched, no migration needed. */
+/*                                                                        */
+/* WHY: per-widget inline data means fixing a typo'd description or a     */
+/* mis-clicked hotspot coordinate requires re-pasting that whole widget   */
+/* in Duda. With externalized data, the same kind of fix becomes editing  */
+/* a JSON file on GitHub and pushing — identical to how diagram image     */
+/* corrections already work, no Duda interaction at all.                 */
+/*                                                                        */
+/* USAGE (opt-in — NOT wired into the master template's default output   */
+/* yet; adopting this in a given catalog's build pipeline is a separate,  */
+/* deliberate step — see Ingersoll_Handoff_v2.md before switching a       */
+/* catalog's generation script over to this):                            */
+/*   window.IngersollWidgetInitFromData(root, {                          */
+/*     dataUrl: "https://cdn.jsdelivr.net/gh/ingersollsteve90-ux/"        */
+/*             + "ingersoll-catalog-diagrams@main/8-3200/"                */
+/*             + "01_crankshaft_camshaft_flywheel.json",                  */
+/*     sectionTitle: "Crankshaft, Camshaft & Flywheel"                    */
+/*   });                                                                  */
+/* Expected JSON shape at dataUrl: { "hotspots": [...], "footnotes": "" } */
+/* — same shape already produced by the hotspot editor's Export.          */
+/*                                                                        */
+/* Cached in sessionStorage per URL, same 30-min-session pattern as the   */
+/* live product catalog fetch, so a multi-section page doesn't re-fetch   */
+/* JSON it already has. On fetch failure, shows a plain in-place error    */
+/* message rather than a silently blank/broken widget.                   */
+/* ---------------------------------------------------------------------- */
+window.IngersollWidgetInitFromData = function (root, opts) {
+  var dataUrl = opts && opts.dataUrl;
+  var sectionTitle = opts && opts.sectionTitle;
+  var CACHE_PREFIX = 'ingersollSectionData_v1:';
+
+  if (!dataUrl) {
+    console.error('Ingersoll widget: IngersollWidgetInitFromData called without a dataUrl.');
+    return;
+  }
+
+  function renderWithData(data) {
+    var hotspots = (data && data.hotspots) || [];
+    var footnotesText = (data && data.footnotes) || '';
+    window.IngersollWidgetInit(root, hotspots, footnotesText, sectionTitle);
+  }
+
+  function showError() {
+    root.innerHTML = '<div style="padding:40px;text-align:center;color:#900;'
+      + 'font-family:Georgia,serif">Unable to load this section\'s data. '
+      + 'Please refresh the page, or contact us if this keeps happening.</div>';
+  }
+
+  function readCache() {
+    try {
+      var raw = sessionStorage.getItem(CACHE_PREFIX + dataUrl);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeCache(data) {
+    try {
+      sessionStorage.setItem(CACHE_PREFIX + dataUrl, JSON.stringify(data));
+    } catch (e) {
+      // storage full/unavailable — not fatal, just skip caching this time
+    }
+  }
+
+  var cached = readCache();
+  if (cached) {
+    renderWithData(cached);
+    return;
+  }
+
+  fetch(dataUrl)
+    .then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function (data) {
+      writeCache(data);
+      renderWithData(data);
+    })
+    .catch(function (err) {
+      console.error('Ingersoll widget: failed to load section data from ' + dataUrl, err);
+      showError();
+    });
+};
