@@ -867,3 +867,213 @@ window.IngersollWidgetInitFromData = function (root, opts) {
       showError();
     });
 };
+/* ---------------------------------------------------------------------- */
+/* Manifest-driven catalog page builder. Builds an entire catalog page's  */
+/* worth of sections from one manifest, instead of requiring each section */
+/* to be individually pasted as its own Duda widget. Reuses                */
+/* window.IngersollWidgetInit (and therefore window.IngersollCatalogNav,  */
+/* the live-catalog fetch, the magnifier, the activation queue)            */
+/* completely unchanged — this only replaces how the STATIC per-section    */
+/* scaffold (header, section-bar, diagram-panel, parts-panel, footer)      */
+/* gets onto the page. Everything downstream of calling                    */
+/* "IngersollWidgetInit(root, hotspots, footnotesText, sectionTitle)"      */
+/* is the exact same code path every already-pasted widget already uses.  */
+/*                                                                        */
+/* Proven against real extracted data from 8-3200 (all 37 sections parsed */
+/* and validated; a 4-section subset rendered end-to-end in headless      */
+/* Chromium with zero uncaught JS errors and correct hotspot/table/nav    */
+/* output) before being merged in here. NOT YET wired up on any live or   */
+/* draft Duda page — that's a separate, deliberate next step once a real  */
+/* manifest is hosted and a single bootstrap widget replaces the existing */
+/* per-section pasted widgets on a catalog's draft page, verified before  */
+/* anything on that page changes.                                        */
+/*                                                                        */
+/* Manifest shape (one entry per section, in display order):             */
+/*   { sectionTitle, breadcrumb, catalogLabel, modelNumbers, diagramUrl,  */
+/*     hotspots: [...], footnotes: "" }                                  */
+/* ---------------------------------------------------------------------- */
+window.IngersollCatalogPageInit = function (container, manifest, opts) {
+  opts = opts || {};
+  var logoUrl = opts.logoUrl || '';
+
+  function el(tag, className, text) {
+    var e = document.createElement(tag);
+    if (className) e.className = className;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  manifest.forEach(function (section) {
+    var root = el('div', 'ingersoll-catalog-widget');
+
+    // --- header ---
+    var header = el('header');
+    var logo = el('img', 'logo-i');
+    logo.src = logoUrl;
+    logo.alt = 'Ingersoll';
+    header.appendChild(logo);
+    var h1 = el('h1');
+    var strong = el('strong', null, 'Ingersoll Parts Catalog');
+    h1.appendChild(strong);
+    h1.appendChild(document.createTextNode(section.catalogLabel));
+    header.appendChild(h1);
+    header.appendChild(el('div', 'breadcrumb', section.breadcrumb));
+    root.appendChild(header);
+
+    // --- section bar ---
+    var sectionBar = el('div', 'section-bar');
+    sectionBar.appendChild(el('span', null, section.sectionTitle));
+    sectionBar.appendChild(el('span', 'catalog-no', section.modelNumbers));
+    root.appendChild(sectionBar);
+
+    // --- nav bar (IngersollCatalogNav wires this up automatically via
+    //     IngersollWidgetInit -> register(), same as every pasted widget) ---
+    var navBar = el('div', 'section-nav-bar');
+    var prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.className = 'section-nav-prev';
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'section-nav-toggle';
+    toggleBtn.innerHTML = '&#9776; Sections';
+    var nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    nextBtn.className = 'section-nav-next';
+    navBar.appendChild(prevBtn);
+    navBar.appendChild(toggleBtn);
+    navBar.appendChild(nextBtn);
+    root.appendChild(navBar);
+
+    // --- spread: diagram panel + parts panel ---
+    var spread = el('div', 'spread');
+
+    var diagramPanel = el('div', 'diagram-panel');
+    var diagramWrap = el('div', 'diagram-wrap');
+    var img = el('img', 'diagram-img');
+    img.src = section.diagramUrl;
+    img.alt = 'Diagram';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    diagramWrap.appendChild(img);
+    diagramPanel.appendChild(diagramWrap);
+    diagramPanel.appendChild(el('div', 'tooltip'));
+    spread.appendChild(diagramPanel);
+
+    var partsPanel = el('div', 'parts-panel');
+    var partsHeader = el('div', 'parts-header');
+    partsHeader.appendChild(el('h2', null, section.sectionTitle));
+    partsHeader.appendChild(el('p', null, 'Click a part number or a callout on the diagram to highlight it'));
+    var zoomPreview = el('div', 'zoom-preview');
+    zoomPreview.appendChild(el('span', 'zp-label', 'Zoomed view'));
+    zoomPreview.appendChild(el('div', 'zp-dots'));
+    zoomPreview.appendChild(el('div', 'zp-cursor'));
+    partsHeader.appendChild(zoomPreview);
+    partsHeader.appendChild(el('div', 'mag-hint', 'Hover or touch the diagram to zoom in here'));
+    partsPanel.appendChild(partsHeader);
+
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    ['Ref', 'Serial', 'Part No.', 'Description', ''].forEach(function (label) {
+      headRow.appendChild(el('th', null, label));
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    table.appendChild(el('tbody', 'parts-tbody'));
+    partsPanel.appendChild(table);
+
+    var footnotesBox = el('div', 'footnotes-box');
+    footnotesBox.appendChild(el('h3', null, 'Notes'));
+    footnotesBox.appendChild(el('div', 'fn-text footnotes-text'));
+    partsPanel.appendChild(footnotesBox);
+
+    spread.appendChild(partsPanel);
+    root.appendChild(spread);
+
+    // --- footer ---
+    var footer = document.createElement('footer');
+    footer.appendChild(el('span', null, 'Ingersoll Tractor Co.'));
+    footer.appendChild(el('span', null, '\u2014'));
+    footer.appendChild(el('span', null, 'caseingersollparts.com'));
+    root.appendChild(footer);
+
+    container.appendChild(root);
+    root.setAttribute('data-ingersoll-claimed', 'true');
+
+    // Same entry point every pasted widget already uses — the activation
+    // queue, the magnifier, the live-catalog fetch, and section-nav
+    // registration are all completely unchanged from here on.
+    if (window.IngersollActivationQueue) {
+      window.IngersollActivationQueue.enqueue(function () {
+        window.IngersollWidgetInit(root, section.hotspots, section.footnotes, section.sectionTitle);
+      });
+    } else {
+      window.IngersollWidgetInit(root, section.hotspots, section.footnotes, section.sectionTitle);
+    }
+  });
+};
+
+/* ---------------------------------------------------------------------- */
+/* Fetch-based wrapper — loads the manifest from a URL instead of         */
+/* requiring it inlined in the widget's own <script> block, same pattern  */
+/* as IngersollWidgetInitFromData above. This is the piece that actually  */
+/* makes "one tiny widget replaces 37 pasted ones" true — without it, a   */
+/* Duda widget calling IngersollCatalogPageInit directly would still need */
+/* the entire manifest pasted inline, recreating the exact widget-size    */
+/* problem v5/v6 were built to solve in the first place.                 */
+/*                                                                        */
+/* USAGE (the entire contents of what a catalog's ONE bootstrap widget    */
+/* needs, once this is actually wired up on a page):                     */
+/*   IngersollCatalogPageInitFromData(                                   */
+/*     document.getElementById('catalog-container'),                     */
+/*     "https://cdn.jsdelivr.net/gh/ingersollsteve90-ux/"                 */
+/*       + "ingersoll-catalog-diagrams@main/8-3200/manifest.json",        */
+/*     { logoUrl: "https://irp.cdn-website.com/.../ingersoll_logo.png" }  */
+/*   );                                                                   */
+/* ---------------------------------------------------------------------- */
+window.IngersollCatalogPageInitFromData = function (container, manifestUrl, opts) {
+  var CACHE_PREFIX = 'ingersollCatalogManifest_v1:';
+
+  function showError() {
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:#900;'
+      + 'font-family:Georgia,serif">Unable to load this catalog\'s data. '
+      + 'Please refresh the page, or contact us if this keeps happening.</div>';
+  }
+
+  function readCache() {
+    try {
+      var raw = sessionStorage.getItem(CACHE_PREFIX + manifestUrl);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeCache(data) {
+    try {
+      sessionStorage.setItem(CACHE_PREFIX + manifestUrl, JSON.stringify(data));
+    } catch (e) {
+      // storage full/unavailable — not fatal, just skip caching this time
+    }
+  }
+
+  var cached = readCache();
+  if (cached) {
+    window.IngersollCatalogPageInit(container, cached, opts);
+    return;
+  }
+
+  fetch(manifestUrl)
+    .then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function (manifest) {
+      writeCache(manifest);
+      window.IngersollCatalogPageInit(container, manifest, opts);
+    })
+    .catch(function (err) {
+      console.error('Ingersoll catalog page: failed to load manifest from ' + manifestUrl, err);
+      showError();
+    });
+};
