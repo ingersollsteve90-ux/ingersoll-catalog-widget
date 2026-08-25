@@ -37,8 +37,8 @@
 .ingersoll-catalog-widget{background:var(--light);font-family:var(--serif);color:var(--dark);height:88vh;min-height:700px;max-height:1400px;display:flex;flex-direction:column;overflow:hidden}
 header{background:#2D2E32;color:#fff;padding:10px 24px;display:flex;align-items:center;gap:16px;border-top:3px solid var(--red);border-bottom:3px solid var(--red)}
 header .logo-i{width:40px;height:40px;flex-shrink:0;object-fit:contain}
-header h1{font-size:12px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#bbb;line-height:1.35}
-header h1 strong{display:block;font-size:17px;font-weight:700;color:#fff;letter-spacing:.02em;text-transform:none}
+header h1{font-size:12px !important;font-weight:400 !important;letter-spacing:.1em;text-transform:uppercase !important;color:#bbb !important;line-height:1.35}
+header h1 strong{display:block;font-size:17px !important;font-weight:700 !important;color:#fff !important;letter-spacing:.02em;text-transform:none !important}
 .breadcrumb{margin-left:auto;font-size:11px;color:#888;letter-spacing:.05em;text-transform:uppercase;font-style:italic}
 .section-bar{background:#2D2E32;color:#fff;padding:8px 24px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;display:flex;align-items:center;gap:12px}
 .section-nav-bar,.book-nav-bar{background:var(--light);border-bottom:1px solid var(--rule);padding:8px 24px;display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -94,7 +94,7 @@ header h1 strong{display:block;font-size:17px;font-weight:700;color:#fff;letter-
 .tooltip .tt-status.out{color:#ff8a80}.tooltip .tt-status.in{color:#8fd98f}.tooltip .tt-status.pending{color:#bbb;font-style:italic;text-transform:none;letter-spacing:0}
 .parts-panel{flex:1;overflow-y:auto;background:#fff;display:flex;flex-direction:column}
 .parts-header{padding:14px 20px 10px;border-bottom:2px solid var(--rule);position:sticky;top:0;background:#fff;z-index:5}
-.parts-header h2{font-size:14px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--mid)}
+.parts-header h2{font-size:14px !important;font-weight:700 !important;letter-spacing:.04em;text-transform:uppercase !important;color:var(--mid) !important}
 .parts-header p{font-style:italic;font-size:11px;color:#888;margin-top:3px}
 table{width:100%;border-collapse:collapse;font-size:12px}
 thead th{background:var(--light);padding:6px 8px;text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#888;border-bottom:1px solid var(--rule);position:sticky;top:0}
@@ -116,7 +116,7 @@ thead th{background:var(--light);padding:6px 8px;text-align:left;font-size:10px;
 .desc-cell .price{color:var(--green);font-weight:700;font-family:var(--mono);font-size:11px}
 .footnotes-box{border-top:2px solid var(--rule);background:#FAF8F3;padding:12px 20px;font-size:11px;color:var(--mid);line-height:1.5}
 .footnotes-box.empty{display:none}
-.footnotes-box h3{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#888;margin-bottom:5px}
+.footnotes-box h3{font-size:10px !important;letter-spacing:.08em;text-transform:uppercase !important;color:#888 !important;margin-bottom:5px}
 .footnotes-box .fn-text{white-space:pre-wrap}
 footer{background:#2D2E32;color:#666;font-size:10px;padding:8px 24px;display:flex;gap:16px;align-items:center;letter-spacing:.05em;text-transform:uppercase;border-top:3px solid var(--red);border-bottom:3px solid var(--red)}
 footer span{color:#888}
