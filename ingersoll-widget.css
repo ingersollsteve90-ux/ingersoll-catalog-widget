@@ -30,7 +30,7 @@
    unstyled widget.
    ========================================================================== */
 
-:root{--red:#C8221A;--dark:#1A1A1A;--mid:#3D3D3D;--light:#F5F3EE;--rule:#D9D4C8;--green:#4A7C3F;--grey:#9A968C;
+:root{--red:#C8221A;--dark:#1A1A1A;--mid:#3D3D3D;--light:#eceef1;--rule:#D9D4C8;--green:#4A7C3F;--grey:#9A968C;
 --hotspot:rgba(200,34,26,0.78);--hotspot-hover:rgba(200,34,26,1);--hotspot-out:rgba(120,120,120,0.7);
 --highlight:#FFF3B0;--mono:'Courier New',monospace;--serif:'Droid Serif',Georgia,serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -46,6 +46,7 @@ header h1 strong{display:block;font-size:17px;font-weight:700;color:#fff;letter-
 .section-nav-bar button:hover,.book-nav-bar button:hover{background:var(--rule)}
 .section-nav-toggle,.book-nav-toggle{max-width:none !important;flex:0 0 auto}
 .section-nav-prev:empty,.section-nav-next:empty,.book-nav-prev:empty,.book-nav-next:empty{visibility:hidden}
+.section-nav-bar,.book-nav-bar{position:sticky;top:0;z-index:15}
 .section-bar .catalog-no{margin-left:auto;font-family:var(--mono);font-size:11px;color:#aaa}
 .spread{display:flex;flex:1;min-height:0;overflow:hidden}
 .diagram-panel{flex:0 0 45%;position:relative;background:#fff;border-right:2px solid var(--rule);overflow:auto;display:flex;align-items:center;justify-content:center;padding:24px}
