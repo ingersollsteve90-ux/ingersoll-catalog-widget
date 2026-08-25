@@ -892,10 +892,19 @@ window.IngersollWidgetInitFromData = function (root, opts) {
 /*   { sectionTitle, breadcrumb, catalogLabel, modelNumbers, diagramUrl,  */
 /*     hotspots: [...], footnotes: "" }                                  */
 /* ---------------------------------------------------------------------- */
-window.IngersollCatalogPageInit = function (container, manifest, opts) {
-  opts = opts || {};
-  var logoUrl = opts.logoUrl || '';
-
+/* ---------------------------------------------------------------------- */
+/* Builds one section's full DOM scaffold (header, section-bar, nav-bar,  */
+/* diagram-panel, parts-panel, footer) from a section data object.        */
+/* Returns the built root element WITHOUT appending it anywhere and       */
+/* WITHOUT calling IngersollWidgetInit on it — callers do both, so this   */
+/* stays a pure "build the shape" function reusable by anything that      */
+/* needs one section's markup: the full-manifest page builder below, and  */
+/* the per-section "book mode" reader further down, which only ever has   */
+/* ONE of these mounted in the DOM at a time instead of building every    */
+/* section up front. Both reuse this exact same code -- there is no       */
+/* separate/divergent scaffold-building logic for book mode.              */
+/* ---------------------------------------------------------------------- */
+window.IngersollBuildSectionScaffold = function (section, logoUrl) {
   function el(tag, className, text) {
     var e = document.createElement(tag);
     if (className) e.className = className;
@@ -903,102 +912,117 @@ window.IngersollCatalogPageInit = function (container, manifest, opts) {
     return e;
   }
 
+  var root = el('div', 'ingersoll-catalog-widget');
+
+  // --- header ---
+  var header = el('header');
+  var logo = el('img', 'logo-i');
+  logo.src = logoUrl || '';
+  logo.alt = 'Ingersoll';
+  header.appendChild(logo);
+  var h1 = el('h1');
+  var strong = el('strong', null, 'Ingersoll Parts Catalog');
+  h1.appendChild(strong);
+  h1.appendChild(document.createTextNode(section.catalogLabel));
+  header.appendChild(h1);
+  header.appendChild(el('div', 'breadcrumb', section.breadcrumb));
+  root.appendChild(header);
+
+  // --- section bar ---
+  var sectionBar = el('div', 'section-bar');
+  sectionBar.appendChild(el('span', null, section.sectionTitle));
+  sectionBar.appendChild(el('span', 'catalog-no', section.modelNumbers));
+  root.appendChild(sectionBar);
+
+  // --- nav bar. In full-manifest mode, IngersollCatalogNav wires this up
+  // automatically via IngersollWidgetInit -> register(), same as every
+  // pasted widget, since every section is genuinely present in the DOM
+  // together and register() can discover real neighbors. In book mode,
+  // only ONE section is ever in the DOM at a time, so register() only
+  // ever sees a single entry and these buttons end up inert (harmless,
+  // just not useful) -- book mode hides this bar via CSS and provides
+  // its own persistent, index-driven nav instead. The markup stays
+  // present either way so register()'s DOM queries never hit null. ---
+  var navBar = el('div', 'section-nav-bar');
+  var prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'section-nav-prev';
+  var toggleBtn = document.createElement('button');
+  toggleBtn.type = 'button';
+  toggleBtn.className = 'section-nav-toggle';
+  toggleBtn.innerHTML = '&#9776; Sections';
+  var nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'section-nav-next';
+  navBar.appendChild(prevBtn);
+  navBar.appendChild(toggleBtn);
+  navBar.appendChild(nextBtn);
+  root.appendChild(navBar);
+
+  // --- spread: diagram panel + parts panel ---
+  var spread = el('div', 'spread');
+
+  var diagramPanel = el('div', 'diagram-panel');
+  var diagramWrap = el('div', 'diagram-wrap');
+  var img = el('img', 'diagram-img');
+  img.src = section.diagramUrl;
+  img.alt = 'Diagram';
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  diagramWrap.appendChild(img);
+  diagramPanel.appendChild(diagramWrap);
+  diagramPanel.appendChild(el('div', 'tooltip'));
+  spread.appendChild(diagramPanel);
+
+  var partsPanel = el('div', 'parts-panel');
+  var partsHeader = el('div', 'parts-header');
+  partsHeader.appendChild(el('h2', null, section.sectionTitle));
+  partsHeader.appendChild(el('p', null, 'Click a part number or a callout on the diagram to highlight it'));
+  var zoomPreview = el('div', 'zoom-preview');
+  zoomPreview.appendChild(el('span', 'zp-label', 'Zoomed view'));
+  zoomPreview.appendChild(el('div', 'zp-dots'));
+  zoomPreview.appendChild(el('div', 'zp-cursor'));
+  partsHeader.appendChild(zoomPreview);
+  partsHeader.appendChild(el('div', 'mag-hint', 'Hover or touch the diagram to zoom in here'));
+  partsPanel.appendChild(partsHeader);
+
+  var table = document.createElement('table');
+  var thead = document.createElement('thead');
+  var headRow = document.createElement('tr');
+  ['Ref', 'Serial', 'Part No.', 'Description', ''].forEach(function (label) {
+    headRow.appendChild(el('th', null, label));
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  table.appendChild(el('tbody', 'parts-tbody'));
+  partsPanel.appendChild(table);
+
+  var footnotesBox = el('div', 'footnotes-box');
+  footnotesBox.appendChild(el('h3', null, 'Notes'));
+  footnotesBox.appendChild(el('div', 'fn-text footnotes-text'));
+  partsPanel.appendChild(footnotesBox);
+
+  spread.appendChild(partsPanel);
+  root.appendChild(spread);
+
+  // --- footer ---
+  var footer = document.createElement('footer');
+  footer.appendChild(el('span', null, 'Ingersoll Tractor Co.'));
+  footer.appendChild(el('span', null, '\u2014'));
+  footer.appendChild(el('span', null, 'caseingersollparts.com'));
+  root.appendChild(footer);
+
+  root.setAttribute('data-ingersoll-claimed', 'true');
+  return root;
+};
+
+window.IngersollCatalogPageInit = function (container, manifest, opts) {
+  opts = opts || {};
+  var logoUrl = opts.logoUrl || '';
+
   manifest.forEach(function (section) {
-    var root = el('div', 'ingersoll-catalog-widget');
-
-    // --- header ---
-    var header = el('header');
-    var logo = el('img', 'logo-i');
-    logo.src = logoUrl;
-    logo.alt = 'Ingersoll';
-    header.appendChild(logo);
-    var h1 = el('h1');
-    var strong = el('strong', null, 'Ingersoll Parts Catalog');
-    h1.appendChild(strong);
-    h1.appendChild(document.createTextNode(section.catalogLabel));
-    header.appendChild(h1);
-    header.appendChild(el('div', 'breadcrumb', section.breadcrumb));
-    root.appendChild(header);
-
-    // --- section bar ---
-    var sectionBar = el('div', 'section-bar');
-    sectionBar.appendChild(el('span', null, section.sectionTitle));
-    sectionBar.appendChild(el('span', 'catalog-no', section.modelNumbers));
-    root.appendChild(sectionBar);
-
-    // --- nav bar (IngersollCatalogNav wires this up automatically via
-    //     IngersollWidgetInit -> register(), same as every pasted widget) ---
-    var navBar = el('div', 'section-nav-bar');
-    var prevBtn = document.createElement('button');
-    prevBtn.type = 'button';
-    prevBtn.className = 'section-nav-prev';
-    var toggleBtn = document.createElement('button');
-    toggleBtn.type = 'button';
-    toggleBtn.className = 'section-nav-toggle';
-    toggleBtn.innerHTML = '&#9776; Sections';
-    var nextBtn = document.createElement('button');
-    nextBtn.type = 'button';
-    nextBtn.className = 'section-nav-next';
-    navBar.appendChild(prevBtn);
-    navBar.appendChild(toggleBtn);
-    navBar.appendChild(nextBtn);
-    root.appendChild(navBar);
-
-    // --- spread: diagram panel + parts panel ---
-    var spread = el('div', 'spread');
-
-    var diagramPanel = el('div', 'diagram-panel');
-    var diagramWrap = el('div', 'diagram-wrap');
-    var img = el('img', 'diagram-img');
-    img.src = section.diagramUrl;
-    img.alt = 'Diagram';
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    diagramWrap.appendChild(img);
-    diagramPanel.appendChild(diagramWrap);
-    diagramPanel.appendChild(el('div', 'tooltip'));
-    spread.appendChild(diagramPanel);
-
-    var partsPanel = el('div', 'parts-panel');
-    var partsHeader = el('div', 'parts-header');
-    partsHeader.appendChild(el('h2', null, section.sectionTitle));
-    partsHeader.appendChild(el('p', null, 'Click a part number or a callout on the diagram to highlight it'));
-    var zoomPreview = el('div', 'zoom-preview');
-    zoomPreview.appendChild(el('span', 'zp-label', 'Zoomed view'));
-    zoomPreview.appendChild(el('div', 'zp-dots'));
-    zoomPreview.appendChild(el('div', 'zp-cursor'));
-    partsHeader.appendChild(zoomPreview);
-    partsHeader.appendChild(el('div', 'mag-hint', 'Hover or touch the diagram to zoom in here'));
-    partsPanel.appendChild(partsHeader);
-
-    var table = document.createElement('table');
-    var thead = document.createElement('thead');
-    var headRow = document.createElement('tr');
-    ['Ref', 'Serial', 'Part No.', 'Description', ''].forEach(function (label) {
-      headRow.appendChild(el('th', null, label));
-    });
-    thead.appendChild(headRow);
-    table.appendChild(thead);
-    table.appendChild(el('tbody', 'parts-tbody'));
-    partsPanel.appendChild(table);
-
-    var footnotesBox = el('div', 'footnotes-box');
-    footnotesBox.appendChild(el('h3', null, 'Notes'));
-    footnotesBox.appendChild(el('div', 'fn-text footnotes-text'));
-    partsPanel.appendChild(footnotesBox);
-
-    spread.appendChild(partsPanel);
-    root.appendChild(spread);
-
-    // --- footer ---
-    var footer = document.createElement('footer');
-    footer.appendChild(el('span', null, 'Ingersoll Tractor Co.'));
-    footer.appendChild(el('span', null, '\u2014'));
-    footer.appendChild(el('span', null, 'caseingersollparts.com'));
-    root.appendChild(footer);
-
+    var root = window.IngersollBuildSectionScaffold(section, logoUrl);
     container.appendChild(root);
-    root.setAttribute('data-ingersoll-claimed', 'true');
 
     // Same entry point every pasted widget already uses — the activation
     // queue, the magnifier, the live-catalog fetch, and section-nav
@@ -1075,5 +1099,239 @@ window.IngersollCatalogPageInitFromData = function (container, manifestUrl, opts
     .catch(function (err) {
       console.error('Ingersoll catalog page: failed to load manifest from ' + manifestUrl, err);
       showError();
+    });
+};
+
+/* ---------------------------------------------------------------------- */
+/* "Book mode" — one section loaded and rendered at a time, instead of    */
+/* all of them. Where IngersollCatalogPageInit(FromData) fetches ONE      */
+/* manifest containing every section's full data and builds all of them   */
+/* at once (fixes the "too many widgets pasted into Duda" problem),       */
+/* this fixes a different problem: even one fetch + one page's worth of   */
+/* DOM for a 60+ section catalog is real weight for a slow connection,    */
+/* most of which goes completely unused if the visitor only needs one or  */
+/* two sections. Book mode fetches a small INDEX first (titles only, not  */
+/* hotspot data), renders just the first section, and fetches/builds      */
+/* each subsequent section only when actually navigated to — "a few       */
+/* dozen parts at a time," not the whole catalog every time.              */
+/*                                                                        */
+/* Reuses window.IngersollBuildSectionScaffold and window.IngersollWidgetInit */
+/* completely unmodified for the actual per-section rendering — same      */
+/* guarantee as everywhere else in this file, the proven rendering code   */
+/* never changes, only how/when it gets invoked does. The one thing NOT   */
+/* reused is window.IngersollCatalogNav's automatic per-section nav bar — */
+/* that module works by discovering neighbor sections already present in */
+/* the DOM, which book mode deliberately avoids (the whole point is only  */
+/* ever having ONE section in the DOM). Each mounted section's own nav    */
+/* bar is left fully intact in the DOM (so IngersollCatalogNav's internal */
+/* register() calls never hit a missing element) but hidden via CSS —     */
+/* book mode's own persistent, index-driven nav bar is what's actually    */
+/* visible and functional.                                               */
+/*                                                                        */
+/* Expected file layout (index + one file per section, same repo/folder  */
+/* pattern as diagram images and the full-manifest.json):                */
+/*   {catalog}/book-index.json                                           */
+/*     { "catalogLabel": "...", "modelNumbers": "...",                   */
+/*       "sections": [ { "slug": "...", "sectionTitle": "..." }, ... ] }  */
+/*   {catalog}/sections/{slug}.json                                      */
+/*     { same shape as one entry in the full manifest.json }             */
+/*                                                                        */
+/* USAGE:                                                                */
+/*   IngersollCatalogBookInit(document.getElementById('catalog-container'), { */
+/*     indexUrl: "https://cdn.jsdelivr.net/gh/.../8-1422/book-index.json", */
+/*     logoUrl: "https://irp.cdn-website.com/.../ingersoll_logo.png"     */
+/*   });                                                                 */
+/* ---------------------------------------------------------------------- */
+window.IngersollCatalogBookInit = function (container, opts) {
+  opts = opts || {};
+  var indexUrl = opts.indexUrl;
+  var logoUrl = opts.logoUrl || '';
+  var sectionsBaseUrl = indexUrl.replace(/[^\/]*$/, '') + 'sections/';
+
+  var INDEX_CACHE_PREFIX = 'ingersollBookIndex_v1:';
+  var SECTION_CACHE_PREFIX = 'ingersollBookSection_v1:';
+
+  var indexData = null;
+  var currentIdx = -1;
+  var currentRoot = null;
+  var loading = false;
+
+  var dropdown, backdrop;
+  var prevBtn, nextBtn, toggleBtn;
+  var mountPoint;
+
+  function readCache(key) {
+    try {
+      var raw = sessionStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeCache(key, data) {
+    try {
+      sessionStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+      // storage full/unavailable — not fatal, just skip caching this time
+    }
+  }
+
+  function fetchJson(url, cacheKey) {
+    var cached = readCache(cacheKey);
+    if (cached) return Promise.resolve(cached);
+    return fetch(url)
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        writeCache(cacheKey, data);
+        return data;
+      });
+  }
+
+  function showFatalError(msg) {
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:#900;'
+      + 'font-family:Georgia,serif">' + msg + '</div>';
+  }
+
+  function showLoadingState() {
+    if (!mountPoint) return;
+    mountPoint.innerHTML = '<div style="padding:60px 20px;text-align:center;'
+      + 'color:#666;font-family:Georgia,serif;font-style:italic">Loading section&hellip;</div>';
+  }
+
+  function buildChrome() {
+    var shell = document.createElement('div');
+    shell.className = 'ingersoll-book-shell';
+
+    var navBar = document.createElement('div');
+    navBar.className = 'section-nav-bar';
+    prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.className = 'section-nav-prev';
+    toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'section-nav-toggle';
+    toggleBtn.innerHTML = '&#9776; Sections';
+    nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    nextBtn.className = 'section-nav-next';
+    navBar.appendChild(prevBtn);
+    navBar.appendChild(toggleBtn);
+    navBar.appendChild(nextBtn);
+    shell.appendChild(navBar);
+
+    mountPoint = document.createElement('div');
+    mountPoint.className = 'ingersoll-book-mount';
+    shell.appendChild(mountPoint);
+
+    container.appendChild(shell);
+
+    prevBtn.addEventListener('click', function () { mountSection(currentIdx - 1); });
+    nextBtn.addEventListener('click', function () { mountSection(currentIdx + 1); });
+    toggleBtn.addEventListener('click', openDropdown);
+  }
+
+  // Same visual pattern as IngersollCatalogNav's dropdown (fixed-centered
+  // modal with backdrop) for consistency, driven by the index instead of
+  // DOM-discovered neighbors.
+  function buildDropdown() {
+    dropdown = document.createElement('div');
+    dropdown.setAttribute('style',
+      'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+      + 'z-index:99997;background:#fff;border-radius:8px;'
+      + 'box-shadow:0 6px 24px rgba(0,0,0,.35);max-height:70vh;overflow-y:auto;'
+      + 'display:none;min-width:300px;max-width:90vw;font-family:Georgia,serif;'
+    );
+    document.body.appendChild(dropdown);
+
+    backdrop = document.createElement('div');
+    backdrop.setAttribute('style', 'position:fixed;inset:0;z-index:99996;background:rgba(0,0,0,.35);display:none;');
+    document.body.appendChild(backdrop);
+    backdrop.addEventListener('click', closeDropdown);
+  }
+
+  function closeDropdown() {
+    dropdown.style.display = 'none';
+    backdrop.style.display = 'none';
+  }
+
+  function openDropdown() {
+    if (!dropdown) buildDropdown();
+    dropdown.innerHTML = '';
+    indexData.sections.forEach(function (s, idx) {
+      var item = document.createElement('div');
+      item.textContent = s.sectionTitle;
+      var active = idx === currentIdx;
+      item.setAttribute('style',
+        'padding:11px 18px;cursor:pointer;border-bottom:1px solid #eee;font-size:13px;color:#1A1A1A;'
+        + (active ? 'background:#F5F3EE;font-weight:700;' : '')
+      );
+      item.addEventListener('mouseenter', function () { item.style.background = '#F5F3EE'; });
+      item.addEventListener('mouseleave', function () { item.style.background = active ? '#F5F3EE' : ''; });
+      item.addEventListener('click', function () {
+        closeDropdown();
+        mountSection(idx);
+      });
+      dropdown.appendChild(item);
+    });
+    dropdown.style.display = 'block';
+    backdrop.style.display = 'block';
+  }
+
+  function updateNavState() {
+    prevBtn.disabled = currentIdx <= 0;
+    nextBtn.disabled = currentIdx >= indexData.sections.length - 1;
+    prevBtn.textContent = currentIdx > 0 ? ('\u2190 ' + indexData.sections[currentIdx - 1].sectionTitle) : '';
+    nextBtn.textContent = currentIdx < indexData.sections.length - 1
+      ? (indexData.sections[currentIdx + 1].sectionTitle + ' \u2192') : '';
+  }
+
+  function mountSection(idx) {
+    if (loading) return;
+    if (idx < 0 || idx >= indexData.sections.length) return;
+    loading = true;
+    showLoadingState();
+
+    var meta = indexData.sections[idx];
+    fetchJson(sectionsBaseUrl + meta.slug + '.json', SECTION_CACHE_PREFIX + meta.slug)
+      .then(function (sectionData) {
+        var newRoot = window.IngersollBuildSectionScaffold(sectionData, logoUrl);
+        // Kept fully intact (so register()'s internal queries never hit a
+        // missing element) but hidden — book mode's own nav bar above is
+        // what's actually visible and functional.
+        var innerNav = newRoot.querySelector('.section-nav-bar');
+        if (innerNav) innerNav.style.display = 'none';
+
+        mountPoint.innerHTML = '';
+        mountPoint.appendChild(newRoot);
+        currentRoot = newRoot;
+        currentIdx = idx;
+        updateNavState();
+
+        window.IngersollWidgetInit(newRoot, sectionData.hotspots, sectionData.footnotes, sectionData.sectionTitle);
+        loading = false;
+      })
+      .catch(function (err) {
+        console.error('Ingersoll book: failed to load section "' + meta.slug + '"', err);
+        loading = false;
+        mountPoint.innerHTML = '<div style="padding:40px;text-align:center;color:#900;'
+          + 'font-family:Georgia,serif">Unable to load this section. Please try again, '
+          + 'or refresh the page.</div>';
+      });
+  }
+
+  fetchJson(indexUrl, INDEX_CACHE_PREFIX + indexUrl)
+    .then(function (data) {
+      if (!data.sections || !data.sections.length) throw new Error('Index has no sections');
+      indexData = data;
+      buildChrome();
+      mountSection(0);
+    })
+    .catch(function (err) {
+      console.error('Ingersoll book: failed to load index from ' + indexUrl, err);
+      showFatalError('Unable to load this catalog. Please refresh the page, or contact us if this keeps happening.');
     });
 };
