@@ -41,11 +41,11 @@ header h1{font-size:12px;font-weight:400;letter-spacing:.1em;text-transform:uppe
 header h1 strong{display:block;font-size:17px;font-weight:700;color:#fff;letter-spacing:.02em;text-transform:none}
 .breadcrumb{margin-left:auto;font-size:11px;color:#888;letter-spacing:.05em;text-transform:uppercase;font-style:italic}
 .section-bar{background:#2D2E32;color:#fff;padding:8px 24px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;display:flex;align-items:center;gap:12px}
-.section-nav-bar{background:var(--light);border-bottom:1px solid var(--rule);padding:8px 24px;display:flex;align-items:center;justify-content:space-between;gap:10px}
-.section-nav-bar button{background:none;border:1px solid var(--grey);color:var(--dark);padding:6px 14px;border-radius:4px;cursor:pointer;font-family:var(--serif);font-size:12px;max-width:36%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.section-nav-bar button:hover{background:var(--rule)}
-.section-nav-toggle{max-width:none !important;flex:0 0 auto}
-.section-nav-prev:empty,.section-nav-next:empty{visibility:hidden}
+.section-nav-bar,.book-nav-bar{background:var(--light);border-bottom:1px solid var(--rule);padding:8px 24px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.section-nav-bar button,.book-nav-bar button{background:none;border:1px solid var(--grey);color:var(--dark);padding:6px 14px;border-radius:4px;cursor:pointer;font-family:var(--serif);font-size:12px;max-width:36%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.section-nav-bar button:hover,.book-nav-bar button:hover{background:var(--rule)}
+.section-nav-toggle,.book-nav-toggle{max-width:none !important;flex:0 0 auto}
+.section-nav-prev:empty,.section-nav-next:empty,.book-nav-prev:empty,.book-nav-next:empty{visibility:hidden}
 .section-bar .catalog-no{margin-left:auto;font-family:var(--mono);font-size:11px;color:#aaa}
 .spread{display:flex;flex:1;min-height:0;overflow:hidden}
 .diagram-panel{flex:0 0 45%;position:relative;background:#fff;border-right:2px solid var(--rule);overflow:auto;display:flex;align-items:center;justify-content:center;padding:24px}
