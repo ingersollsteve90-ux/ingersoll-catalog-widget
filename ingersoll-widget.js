@@ -1157,7 +1157,7 @@ window.IngersollCatalogBookInit = function (container, opts) {
   var loading = false;
 
   var dropdown, backdrop;
-  var prevBtn, nextBtn, toggleBtn;
+  var prevBtn, nextBtn, toggleBtn, navBar;
   var mountPoint;
 
   function readCache(key) {
@@ -1196,32 +1196,64 @@ window.IngersollCatalogBookInit = function (container, opts) {
       + 'font-family:Georgia,serif">' + msg + '</div>';
   }
 
+  // Clears mountPoint for a state transition (loading or error) WITHOUT
+  // orphaning navBar. navBar lives inside mountPoint's subtree now (moved
+  // into each section root so it sits under that section's heading —
+  // see mountSection below), so a plain `mountPoint.innerHTML = ''` would
+  // silently strand it outside the document the moment a load starts —
+  // including on failure, where nothing would ever re-insert it,
+  // permanently stranding the visitor with no way to navigate away from
+  // a broken section. Detaching navBar first and re-appending it here
+  // keeps it present (and functional — its click handlers were never
+  // removed, just the element temporarily removed from the document)
+  // through every transition, loading and error alike.
+  function resetMountPointKeepingNav() {
+    mountPoint.innerHTML = '';
+    if (navBar) mountPoint.appendChild(navBar);
+  }
+
   function showLoadingState() {
     if (!mountPoint) return;
-    mountPoint.innerHTML = '<div style="padding:60px 20px;text-align:center;'
-      + 'color:#666;font-family:Georgia,serif;font-style:italic">Loading section&hellip;</div>';
+    resetMountPointKeepingNav();
+    var msg = document.createElement('div');
+    msg.setAttribute('style', 'padding:60px 20px;text-align:center;color:#666;'
+      + 'font-family:Georgia,serif;font-style:italic');
+    msg.innerHTML = 'Loading section&hellip;';
+    mountPoint.appendChild(msg);
   }
 
   function buildChrome() {
     var shell = document.createElement('div');
     shell.className = 'ingersoll-book-shell';
 
-    var navBar = document.createElement('div');
-    navBar.className = 'section-nav-bar';
+    navBar = document.createElement('div');
+    // Deliberately NOT ".section-nav-bar"/".section-nav-toggle" etc. —
+    // this bar gets physically moved into each freshly-built section root
+    // below (so it visually sits directly under that section's own
+    // heading, matching every other catalog page's layout) instead of
+    // staying pinned above the header. Sharing the ".section-nav-toggle"
+    // class would make IngersollCatalogNav.register() (called for every
+    // section via IngersollWidgetInit) mistake it for that section's own
+    // inert per-section nav bar and wire a second, redundant click
+    // handler onto the very same button. Styled identically via shared
+    // rules in ingersoll-widget.css (".section-nav-bar,.book-nav-bar{...}"
+    // etc.), just under non-colliding class names.
+    navBar.className = 'book-nav-bar';
     prevBtn = document.createElement('button');
     prevBtn.type = 'button';
-    prevBtn.className = 'section-nav-prev';
+    prevBtn.className = 'book-nav-prev';
     toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';
-    toggleBtn.className = 'section-nav-toggle';
+    toggleBtn.className = 'book-nav-toggle';
     toggleBtn.innerHTML = '&#9776; Sections';
     nextBtn = document.createElement('button');
     nextBtn.type = 'button';
-    nextBtn.className = 'section-nav-next';
+    nextBtn.className = 'book-nav-next';
     navBar.appendChild(prevBtn);
     navBar.appendChild(toggleBtn);
     navBar.appendChild(nextBtn);
-    shell.appendChild(navBar);
+    // Not appended anywhere yet — mountSection() inserts it into the
+    // right slot inside each newly-built section root, below.
 
     mountPoint = document.createElement('div');
     mountPoint.className = 'ingersoll-book-mount';
@@ -1300,13 +1332,28 @@ window.IngersollCatalogBookInit = function (container, opts) {
       .then(function (sectionData) {
         var newRoot = window.IngersollBuildSectionScaffold(sectionData, logoUrl);
         // Kept fully intact (so register()'s internal queries never hit a
-        // missing element) but hidden — book mode's own nav bar above is
-        // what's actually visible and functional.
+        // missing element) but hidden — book mode's own persistent nav
+        // bar, moved into place just below, is what's actually visible
+        // and functional.
         var innerNav = newRoot.querySelector('.section-nav-bar');
         if (innerNav) innerNav.style.display = 'none';
 
         mountPoint.innerHTML = '';
         mountPoint.appendChild(newRoot);
+
+        // Move the one persistent, already-wired nav bar into this
+        // section's own layout, directly under its heading — the same
+        // slot the hidden inner nav bar above occupies (right after
+        // .section-bar) — instead of leaving it pinned above the header.
+        // A real DOM move, not a rebuild, so its click handlers and state
+        // (including the open/closed dropdown) carry over untouched.
+        var sectionBarEl = newRoot.querySelector('.section-bar');
+        if (sectionBarEl && sectionBarEl.nextSibling) {
+          newRoot.insertBefore(navBar, sectionBarEl.nextSibling);
+        } else {
+          newRoot.appendChild(navBar);
+        }
+
         currentRoot = newRoot;
         currentIdx = idx;
         updateNavState();
@@ -1317,9 +1364,16 @@ window.IngersollCatalogBookInit = function (container, opts) {
       .catch(function (err) {
         console.error('Ingersoll book: failed to load section "' + meta.slug + '"', err);
         loading = false;
-        mountPoint.innerHTML = '<div style="padding:40px;text-align:center;color:#900;'
-          + 'font-family:Georgia,serif">Unable to load this section. Please try again, '
-          + 'or refresh the page.</div>';
+        // currentIdx/currentRoot deliberately NOT updated here — they stay
+        // at the last successfully-mounted section, so navBar (kept alive
+        // by resetMountPointKeepingNav below, not stranded) still shows
+        // correct, clickable prev/next neighbors and a working Sections
+        // dropdown to recover to a different section.
+        resetMountPointKeepingNav();
+        var msg = document.createElement('div');
+        msg.setAttribute('style', 'padding:40px;text-align:center;color:#900;font-family:Georgia,serif');
+        msg.textContent = 'Unable to load this section. Please try again, or refresh the page.';
+        mountPoint.appendChild(msg);
       });
   }
 
