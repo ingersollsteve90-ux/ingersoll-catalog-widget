@@ -1150,6 +1150,17 @@ window.IngersollCatalogBookInit = function (container, opts) {
 
   var INDEX_CACHE_PREFIX = 'ingersollBookIndex_v1:';
   var SECTION_CACHE_PREFIX = 'ingersollBookSection_v1:';
+  // Remembers which section (by slug) was last successfully mounted for
+  // THIS catalog (keyed by indexUrl, same scoping as the two prefixes
+  // above), so that a forced reload — e.g. the pageshow/bfcache reload
+  // that runs after Add to Cart + Back (see the auto-refresh-on-back-
+  // button comment further up this file) — can restore the section the
+  // visitor was actually looking at instead of always landing back on
+  // section 0. Session-scoped on purpose: a stale "remembered" section
+  // from days ago is more likely to be wrong than helpful, and this
+  // reuses the exact storage mechanism (readCache/writeCache below)
+  // section data is already cached with.
+  var LAST_SECTION_PREFIX = 'ingersollBookLastSection_v1:';
 
   var indexData = null;
   var currentIdx = -1;
@@ -1328,7 +1339,7 @@ window.IngersollCatalogBookInit = function (container, opts) {
     showLoadingState();
 
     var meta = indexData.sections[idx];
-    fetchJson(sectionsBaseUrl + meta.slug + '.json', SECTION_CACHE_PREFIX + sectionsBaseUrl + meta.slug)
+    fetchJson(sectionsBaseUrl + meta.slug + '.json', SECTION_CACHE_PREFIX + meta.slug)
       .then(function (sectionData) {
         var newRoot = window.IngersollBuildSectionScaffold(sectionData, logoUrl);
         // Kept fully intact (so register()'s internal queries never hit a
@@ -1357,6 +1368,11 @@ window.IngersollCatalogBookInit = function (container, opts) {
         currentRoot = newRoot;
         currentIdx = idx;
         updateNavState();
+        // Remember this section so a subsequent reload (Add to Cart +
+        // Back, most commonly) restores it instead of defaulting to
+        // section 0 — see resolveInitialIndex() below, called once at
+        // init time.
+        writeCache(LAST_SECTION_PREFIX + indexUrl, meta.slug);
 
         window.IngersollWidgetInit(newRoot, sectionData.hotspots, sectionData.footnotes, sectionData.sectionTitle);
         loading = false;
@@ -1377,12 +1393,30 @@ window.IngersollCatalogBookInit = function (container, opts) {
       });
   }
 
+  // Picks which section to mount on initial load: the section remembered
+  // from this same browser session for this catalog, if one exists and
+  // still appears in the current index — otherwise section 0, same as
+  // before. Falling back to 0 covers a first-ever visit, a different
+  // catalog than the one last viewed (indexUrl scoping already prevents
+  // cross-catalog bleed, this is just the defensive belt-and-suspenders
+  // case), and a remembered slug that no longer exists in the index
+  // (e.g. sections were renamed/removed since the visitor's last look).
+  function resolveInitialIndex(data) {
+    var remembered = readCache(LAST_SECTION_PREFIX + indexUrl);
+    if (remembered) {
+      for (var i = 0; i < data.sections.length; i++) {
+        if (data.sections[i].slug === remembered) return i;
+      }
+    }
+    return 0;
+  }
+
   fetchJson(indexUrl, INDEX_CACHE_PREFIX + indexUrl)
     .then(function (data) {
       if (!data.sections || !data.sections.length) throw new Error('Index has no sections');
       indexData = data;
       buildChrome();
-      mountSection(0);
+      mountSection(resolveInitialIndex(data));
     })
     .catch(function (err) {
       console.error('Ingersoll book: failed to load index from ' + indexUrl, err);
