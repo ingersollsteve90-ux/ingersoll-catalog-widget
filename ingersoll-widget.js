@@ -1328,7 +1328,7 @@ window.IngersollCatalogBookInit = function (container, opts) {
     showLoadingState();
 
     var meta = indexData.sections[idx];
-    fetchJson(sectionsBaseUrl + meta.slug + '.json', SECTION_CACHE_PREFIX + meta.slug)
+    fetchJson(sectionsBaseUrl + meta.slug + '.json', SECTION_CACHE_PREFIX + sectionsBaseUrl + meta.slug)
       .then(function (sectionData) {
         var newRoot = window.IngersollBuildSectionScaffold(sectionData, logoUrl);
         // Kept fully intact (so register()'s internal queries never hit a
