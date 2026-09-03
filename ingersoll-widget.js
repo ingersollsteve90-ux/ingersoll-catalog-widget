@@ -967,7 +967,22 @@ window.IngersollBuildSectionScaffold = function (section, logoUrl) {
   var img = el('img', 'diagram-img');
   img.src = section.diagramUrl;
   img.alt = 'Diagram';
-  img.loading = 'lazy';
+  // NOTE: deliberately no loading="lazy" here (removed 2026-09-03). It was
+  // added for the old per-widget-paste architecture, where up to 60+
+  // sections' images could all sit in the DOM on one page at once. Every
+  // live catalog is now book mode, which only ever mounts ONE section (and
+  // therefore one diagram image) at a time -- the problem lazy-loading
+  // solved no longer exists in production, and native loading="lazy" is
+  // intersection-based, which this project has already independently found
+  // does not reliably fire in Duda's runtime (see the IntersectionObserver
+  // note elsewhere in this file). Confirmed live: with loading="lazy", this
+  // image would sometimes never actually fetch at all -- img.complete stayed
+  // false and img.naturalWidth stayed 0 indefinitely even though the exact
+  // same URL loaded fine via a plain fetch() -- which is what produced the
+  // "diagram never loads, hotspots scattered over a blank panel" reports
+  // (B1278 sections, 8-3310 Alternator Assembly). Forcing eager-load fixed
+  // it instantly every time it was tested. decoding="async" is unrelated
+  // (it only affects whether decode blocks the main thread) and is kept.
   img.decoding = 'async';
   diagramWrap.appendChild(img);
   diagramPanel.appendChild(diagramWrap);
@@ -1188,10 +1203,27 @@ window.IngersollCatalogBookInit = function (container, opts) {
     }
   }
 
+  // One retry after a short delay before surfacing an error — smooths over
+  // a single transient CDN/network blip (jsDelivr, mostly) instead of
+  // immediately showing "Unable to load this section..." for a fetch that
+  // would have succeeded a second later. Added 2026-09-03: none of these
+  // fetches had any retry before, so any one-off failure was permanent for
+  // that page view, matching reports of the error clearing up on its own
+  // after a manual refresh or two.
+  function fetchWithRetry(url, retriesLeft) {
+    return fetch(url).catch(function (err) {
+      if (retriesLeft > 0) {
+        return new Promise(function (resolve) { setTimeout(resolve, 800); })
+          .then(function () { return fetchWithRetry(url, retriesLeft - 1); });
+      }
+      throw err;
+    });
+  }
+
   function fetchJson(url, cacheKey) {
     var cached = readCache(cacheKey);
     if (cached) return Promise.resolve(cached);
-    return fetch(url)
+    return fetchWithRetry(url, 1)
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -1339,7 +1371,25 @@ window.IngersollCatalogBookInit = function (container, opts) {
     showLoadingState();
 
     var meta = indexData.sections[idx];
-    fetchJson(sectionsBaseUrl + meta.slug + '.json', SECTION_CACHE_PREFIX + meta.slug)
+    // CRITICAL FIX (2026-09-03): the cache key used to be just
+    // SECTION_CACHE_PREFIX + meta.slug, with no catalog identifier in it at
+    // all -- and unlike every other cache in this file, no TTL either. Many
+    // catalogs legitimately share a section slug (most have their own
+    // "air_cleaner", "decals", etc.), so whichever catalog a visitor's
+    // browser tab loaded that slug for FIRST won the cache entry for the
+    // rest of the tab's session, and every other catalog's own section with
+    // the same slug silently rendered under it -- a completely different
+    // catalog's diagram, part numbers, and prices, with no error and
+    // nothing visually broken. Confirmed live: after viewing 8-3310's
+    // "Air Cleaner" section, 8-3042/8-3121/A1374 (which each have their own
+    // "Air Cleaner" section too) all rendered 8-3310's data instead of their
+    // own in that same tab, verified via the actual image request going to
+    // 8-3310's diagram. Scoping the key by indexUrl (already unique per
+    // catalog, already in scope here) fixes it — this matches the scoping
+    // LAST_SECTION_PREFIX already uses just below, and the comment on that
+    // constant further up already (incorrectly, until now) claimed this key
+    // had the same scoping.
+    fetchJson(sectionsBaseUrl + meta.slug + '.json', SECTION_CACHE_PREFIX + indexUrl + ':' + meta.slug)
       .then(function (sectionData) {
         var newRoot = window.IngersollBuildSectionScaffold(sectionData, logoUrl);
         // Kept fully intact (so register()'s internal queries never hit a
