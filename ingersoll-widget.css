@@ -46,7 +46,14 @@ header h1 strong{display:block;font-size:17px !important;font-weight:700 !import
 .section-nav-bar button:hover,.book-nav-bar button:hover{background:var(--rule)}
 .section-nav-toggle,.book-nav-toggle{max-width:none !important;flex:0 0 auto}
 .section-nav-prev:empty,.section-nav-next:empty,.book-nav-prev:empty,.book-nav-next:empty{visibility:hidden}
-.section-nav-bar,.book-nav-bar{position:sticky;top:0;z-index:15}
+/* z-index lowered 15->5, 2026-09-03: at 15 this sat ABOVE Duda's own site
+   header mega-menu (confirmed live at z-index:11), so once scrolled down far
+   enough for this bar to be pinned, opening "Shop" (or any mega-menu) drew
+   it underneath this bar instead of over it. 5 matches .parts-header's
+   existing z-index just below (it never needed to be higher — nothing else
+   in the widget's own normal layout overlaps this bar's position), and
+   stays safely under any of Duda's own UI chrome. */
+.section-nav-bar,.book-nav-bar{position:sticky;top:0;z-index:5}
 .section-bar .catalog-no{margin-left:auto;font-family:var(--mono);font-size:11px;color:#aaa}
 .spread{display:flex;flex:1;min-height:0;overflow:hidden}
 .diagram-panel{flex:0 0 45%;position:relative;background:#fff;border-right:2px solid var(--rule);overflow:auto;display:flex;align-items:center;justify-content:center;padding:24px}
