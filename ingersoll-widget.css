@@ -56,7 +56,44 @@ header h1 strong{display:block;font-size:17px !important;font-weight:700 !import
 .section-nav-bar,.book-nav-bar{position:sticky;top:0;z-index:5}
 .section-bar .catalog-no{margin-left:auto;font-family:var(--mono);font-size:11px;color:#aaa}
 .spread{display:flex;flex:1;min-height:0;overflow:hidden}
-.diagram-panel{flex:0 0 45%;position:relative;background:#fff;border-right:2px solid var(--rule);overflow:auto;display:flex;align-items:center;justify-content:center;padding:24px}
+/* overflow CHANGED auto->hidden, 2026-09-14: this panel's content (the
+   diagram image + hotspot dots) is ALWAYS explicitly fit to the panel's own
+   measured space by JS (sizeDiagramContainer(), in ingersoll-widget.js —
+   reads panel.clientWidth/clientHeight and sets the diagram's max-width/
+   max-height to match, every time the panel resizes). With overflow:auto,
+   any sub-pixel rendering rounding that makes the diagram's actual rendered
+   box even a hair taller/wider than that computed space is enough for the
+   browser to show a scrollbar — and that scrollbar's own width then SHRINKS
+   panel.clientWidth/clientHeight, which retriggers the same ResizeObserver
+   with a smaller target size, which removes the overflow, which removes the
+   scrollbar, which grows clientWidth/clientHeight back, which retriggers the
+   observer with the original (overflow-prone) larger target size again —
+   forever, at animation-frame speed. This is a genuine infinite
+   ResizeObserver feedback loop, not a one-time "loop limit exceeded"
+   browser warning.
+
+   CONFIRMED LIVE on d1135-interactive-catalog's Air Cleaner section
+   (reported by Steve as the diagram "vibrating," which stopped whenever he
+   tried to screenshot it): captured the exact numbers mid-loop directly
+   from the live page — panel.clientWidth/clientHeight alternated between
+   683x526 (no scrollbar) and 668x510 (scrollbar showing, -15/-16px, the
+   scrollbar's own width) every ~80-160ms, with the diagram's own computed
+   max-width/max-height alternating in lockstep between 635x478 and
+   620x462 — forever, for as long as the section stayed mounted. Verified
+   the fix directly against this same live content before shipping it:
+   applying overflow:hidden in the live page (temporarily, in-memory only,
+   nothing pushed) made panel.clientWidth/clientHeight/scrollWidth/
+   scrollHeight and the diagram's max-width/max-height all lock to a single
+   stable value (683x526 / 635x478) and stay there — 40 consecutive samples
+   over 3.2 seconds, zero movement, no scrollbar ever appears.
+
+   No real content in this panel legitimately needs to scroll — the whole
+   point of sizeDiagramContainer() is that the diagram is always fit to the
+   panel exactly, on purpose — so overflow:auto was never actually doing
+   anything useful here, only creating the conditions for this loop. This
+   is a shared-file fix: it ships for every catalog page in one commit, the
+   same as the z-index and lazy-loading fixes below/above. */
+.diagram-panel{flex:0 0 45%;position:relative;background:#fff;border-right:2px solid var(--rule);overflow:hidden;display:flex;align-items:center;justify-content:center;padding:24px}
 /* Fixed-size frame, identical on every section page, so diagrams present
    consistently regardless of each source scan's own resolution. Ratio
    (620:800 = 0.775) matches the ~0.773 ratio of a standard scanned
