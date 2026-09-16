@@ -69,6 +69,34 @@
 })();
 
 /* ---------------------------------------------------------------------- */
+/* Centralized environment/tunables config — added 2026-09-16. This is    */
+/* deliberately LIGHTWEIGHT: values already hardcoded throughout this     */
+/* file (retry counts, backoff delays, the live-catalog cache TTL) live   */
+/* here instead, plus a `platform` tag used only for log labeling right   */
+/* now. It is NOT a data-source switch — window.IngersollCatalog's        */
+/* Duda-specific fetch (dmAPI.loadCollectionsAPI, Duda's own pagination   */
+/* and field shapes) and the Shopify pilot's Storefront-API adapter       */
+/* (claude/ingersoll-shopify-adapter.js) are different enough — different */
+/* APIs, different pagination, an entirely different Add-to-Cart flow —   */
+/* that swapping between them is real adapter work, not a config value.   */
+/* That stays a separate, deliberate piece of work once the Shopify pilot */
+/* is proven at full-catalog scale, not something to guess the shape of   */
+/* here. Object.assign'd onto (rather than replacing) any IngersollEnv a  */
+/* page already set before this script runs, so a future page only needs */
+/* to override the specific keys it cares about, e.g.:                   */
+/*   <script>window.IngersollEnv = { platform: 'shopify' };</script>      */
+/*   <script src=".../ingersoll-widget.js"></script>                     */
+/* ---------------------------------------------------------------------- */
+window.IngersollEnv = Object.assign({
+  platform: 'duda',            // label only right now — see note above
+  fetchRetries: 2,             // JSON fetches (book-mode index/section data, opt-in manifest/per-section data)
+  fetchRetryDelayMs: 700,
+  imageRetries: 2,             // diagram <img> loads
+  imageRetryDelayMs: 900,
+  catalogCacheTtlMs: 30 * 60 * 1000  // live product-catalog (stock/price) sessionStorage cache
+}, window.IngersollEnv || {});
+
+/* ---------------------------------------------------------------------- */
 /* Shared fetch-with-retry-and-fallback helpers — added 2026-09-15 after  */
 /* confirming, via a live browser console capture, a genuine 403 from     */
 /* cdn.jsdelivr.net on an otherwise-healthy section JSON file. Used by    */
@@ -216,7 +244,7 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
   }
 
   var CACHE_KEY = 'ingersollCatalogCache_v1';
-  var CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes — long enough to cover a normal browsing session
+  var CACHE_TTL_MS = window.IngersollEnv.catalogCacheTtlMs; // default 30 min — long enough to cover a normal browsing session
 
   function readCache() {
     try {
@@ -584,7 +612,7 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
   }
   function setupDiagramSizing() {
     sizeDiagramContainer();
-    new ResizeObserver(sizeDiagramContainer).observe(root.querySelector('.diagram-panel'));
+    ingersollObserveResize(root.querySelector('.diagram-panel'), sizeDiagramContainer);
   }
 
   function sizeHotspot(el) {
@@ -600,8 +628,8 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
   }
 
   function setupHotspotResize() {
-    new ResizeObserver(() => root.querySelectorAll('.hotspot').forEach(sizeHotspot))
-      .observe(root.querySelector('.diagram-wrap'));
+    ingersollObserveResize(root.querySelector('.diagram-wrap'), () =>
+      root.querySelectorAll('.hotspot').forEach(sizeHotspot));
   }
 
   // Magnifier lens: lets people read fine print / closely-packed ref numbers
@@ -933,7 +961,7 @@ window.IngersollWidgetInitFromData = function (root, opts) {
     return;
   }
 
-  ingersollFetchWithFallback(dataUrl, 2, 700)
+  ingersollFetchWithFallback(dataUrl, window.IngersollEnv.fetchRetries, window.IngersollEnv.fetchRetryDelayMs)
     .then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return res.json();
@@ -943,7 +971,7 @@ window.IngersollWidgetInitFromData = function (root, opts) {
       renderWithData(data);
     })
     .catch(function (err) {
-      console.error('Ingersoll widget: failed to load section data from ' + dataUrl, err);
+      console.error('Ingersoll widget (' + window.IngersollEnv.platform + '): failed to load section data from ' + dataUrl, err);
       showError();
     });
 };
@@ -985,6 +1013,30 @@ window.IngersollWidgetInitFromData = function (root, opts) {
 /* separate/divergent scaffold-building logic for book mode.              */
 /* ---------------------------------------------------------------------- */
 /* ---------------------------------------------------------------------- */
+/* ResizeObserver with a graceful fallback — added 2026-09-16. Both call   */
+/* sites below used to do `new ResizeObserver(...)` directly, with no      */
+/* guard: on a browser without it, that throws synchronously, which        */
+/* aborts activate() partway through — meaning hotspots, the parts table,  */
+/* and the live stock lookup never render for that section AT ALL, not     */
+/* just "resize stops working." ResizeObserver has near-universal support  */
+/* today, so this is unlikely to be behind any of the reliability issues   */
+/* already fixed above — but it's a cheap guard against a real hard-       */
+/* failure mode on whatever browser doesn't have it. Falls back to a       */
+/* window resize listener, which only catches actual viewport resizes     */
+/* (not e.g. a Duda-driven layout shift the panel itself causes) — a       */
+/* real but much smaller gap than the section failing to render at all.   */
+/* ---------------------------------------------------------------------- */
+function ingersollObserveResize(el, callback) {
+  if (window.ResizeObserver) {
+    var ro = new ResizeObserver(callback);
+    ro.observe(el);
+    return ro;
+  }
+  window.addEventListener('resize', callback);
+  return { disconnect: function () { window.removeEventListener('resize', callback); } };
+}
+
+/* ---------------------------------------------------------------------- */
 /* Diagram image loading with retry + fallback + a manual Retry control — */
 /* added 2026-09-15. Plain <img> elements have no built-in retry of any   */
 /* kind, so a single failed load (a jsDelivr blip, a dropped connection)  */
@@ -1022,8 +1074,8 @@ function ingersollMountDiagramImage(wrap, url) {
   wrap.appendChild(img);
   wrap.appendChild(errorBox);
 
-  var RETRIES = 2;
-  var DELAY_MS = 900;
+  var RETRIES = window.IngersollEnv.imageRetries;
+  var DELAY_MS = window.IngersollEnv.imageRetryDelayMs;
   var attemptsLeft = RETRIES;
   var triedFallback = false;
 
@@ -1262,7 +1314,7 @@ window.IngersollCatalogPageInitFromData = function (container, manifestUrl, opts
     return;
   }
 
-  ingersollFetchWithFallback(manifestUrl, 2, 700)
+  ingersollFetchWithFallback(manifestUrl, window.IngersollEnv.fetchRetries, window.IngersollEnv.fetchRetryDelayMs)
     .then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return res.json();
@@ -1272,7 +1324,7 @@ window.IngersollCatalogPageInitFromData = function (container, manifestUrl, opts
       window.IngersollCatalogPageInit(container, manifest, opts);
     })
     .catch(function (err) {
-      console.error('Ingersoll catalog page: failed to load manifest from ' + manifestUrl, err);
+      console.error('Ingersoll catalog page (' + window.IngersollEnv.platform + '): failed to load manifest from ' + manifestUrl, err);
       showError();
     });
 };
@@ -1375,7 +1427,7 @@ window.IngersollCatalogBookInit = function (container, opts) {
   function fetchJson(url, cacheKey) {
     var cached = readCache(cacheKey);
     if (cached) return Promise.resolve(cached);
-    return ingersollFetchWithFallback(url, 2, 700)
+    return ingersollFetchWithFallback(url, window.IngersollEnv.fetchRetries, window.IngersollEnv.fetchRetryDelayMs)
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -1580,7 +1632,7 @@ window.IngersollCatalogBookInit = function (container, opts) {
         loading = false;
       })
       .catch(function (err) {
-        console.error('Ingersoll book: failed to load section "' + meta.slug + '"', err);
+        console.error('Ingersoll book (' + window.IngersollEnv.platform + '): failed to load section "' + meta.slug + '"', err);
         loading = false;
         // currentIdx/currentRoot deliberately NOT updated here — they stay
         // at the last successfully-mounted section, so navBar (kept alive
@@ -1639,7 +1691,7 @@ window.IngersollCatalogBookInit = function (container, opts) {
       mountSection(resolveInitialIndex(data));
     })
     .catch(function (err) {
-      console.error('Ingersoll book: failed to load index from ' + indexUrl, err);
+      console.error('Ingersoll book (' + window.IngersollEnv.platform + '): failed to load index from ' + indexUrl, err);
       showFatalError('Unable to load this catalog. Please refresh the page, or contact us if this keeps happening.');
     });
 };
