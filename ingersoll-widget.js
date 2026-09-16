@@ -68,6 +68,86 @@
   document.head.appendChild(style);
 })();
 
+/* ---------------------------------------------------------------------- */
+/* Shared fetch-with-retry-and-fallback helpers — added 2026-09-15 after  */
+/* confirming, via a live browser console capture, a genuine 403 from     */
+/* cdn.jsdelivr.net on an otherwise-healthy section JSON file. Used by    */
+/* every dynamic JSON fetch in this file (book mode's index/section data, */
+/* the opt-in per-section and per-manifest data fetches) and by diagram   */
+/* image loading further down. Two independent layers of resilience:     */
+/*                                                                        */
+/*   1. Retries a FAILED ATTEMPT — whether that's a rejected fetch()      */
+/*      (dropped connection, DNS) OR a resolved-but-bad HTTP response     */
+/*      (403/429/5xx from jsDelivr) — a few times with a short backoff    */
+/*      between attempts. Before this, a non-ok HTTP response was never   */
+/*      retried at all (only actual network-level rejections were,       */
+/*      because the `!res.ok` check happened in a `.then()` outside the   */
+/*      old retry helper's try/catch scope) — exactly the gap that let a  */
+/*      single jsDelivr 403 permanently fail a page view that a second    */
+/*      attempt would have resolved.                                     */
+/*   2. If every retry against the primary URL still fails, and that URL  */
+/*      is a jsDelivr "/gh/" GitHub-mirror URL, falls back to fetching    */
+/*      the same file directly from raw.githubusercontent.com — a second,*/
+/*      independent host, not just another attempt at the same one —     */
+/*      before finally giving up.                                        */
+/* ---------------------------------------------------------------------- */
+function ingersollJsDelivrToRawGithub(url) {
+  var m = /^https:\/\/cdn\.jsdelivr\.net\/gh\/([^\/]+)\/([^@\/]+)@([^\/]+)\/(.+)$/.exec(url || '');
+  if (!m) return null;
+  return 'https://raw.githubusercontent.com/' + m[1] + '/' + m[2] + '/' + m[3] + '/' + m[4];
+}
+
+function ingersollIsRetryableStatus(status) {
+  return status === 403 || status === 429 || (status >= 500 && status < 600);
+}
+
+// Attempts `url` up to `retries + 1` times total, with `delayMs` between
+// attempts, retrying both network-level failures AND retryable-but-bad
+// HTTP responses. Resolves with the Response object on success (2xx) or
+// on a non-retryable bad status (e.g. a genuine 404 — retrying that would
+// never help). Rejects only if every attempt threw a network-level error.
+function ingersollFetchWithRetry(url, retries, delayMs) {
+  function attempt(retriesLeft) {
+    return fetch(url).then(function (res) {
+      if (res.ok || !ingersollIsRetryableStatus(res.status) || retriesLeft <= 0) {
+        return res;
+      }
+      return new Promise(function (resolve) { setTimeout(resolve, delayMs); })
+        .then(function () { return attempt(retriesLeft - 1); });
+    }, function (err) {
+      if (retriesLeft <= 0) throw err;
+      return new Promise(function (resolve) { setTimeout(resolve, delayMs); })
+        .then(function () { return attempt(retriesLeft - 1); });
+    });
+  }
+  return attempt(retries);
+}
+
+// Same as above, but if every retry against `url` itself still fails (bad
+// status or network error) and `url` is a jsDelivr "/gh/" URL, makes one
+// more attempt against the same file on raw.githubusercontent.com before
+// giving up. This is what actually recovers from a jsDelivr-side outage
+// rather than just a transient blip on the same host.
+function ingersollFetchWithFallback(url, retries, delayMs) {
+  function tryFallback(prevErrOrRes) {
+    var fallbackUrl = ingersollJsDelivrToRawGithub(url);
+    if (!fallbackUrl) {
+      if (prevErrOrRes instanceof Response) return prevErrOrRes;
+      throw prevErrOrRes;
+    }
+    return fetch(fallbackUrl).catch(function () {
+      if (prevErrOrRes instanceof Response) return prevErrOrRes;
+      throw prevErrOrRes;
+    });
+  }
+
+  return ingersollFetchWithRetry(url, retries, delayMs).then(function (res) {
+    return res.ok ? res : tryFallback(res);
+  }, function (err) {
+    return tryFallback(err);
+  });
+}
+
 window.IngersollCatalog = window.IngersollCatalog || (function () {
   var cache = null;
   var byNamePrefix = {};
@@ -853,7 +933,7 @@ window.IngersollWidgetInitFromData = function (root, opts) {
     return;
   }
 
-  fetch(dataUrl)
+  ingersollFetchWithFallback(dataUrl, 2, 700)
     .then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return res.json();
@@ -904,6 +984,87 @@ window.IngersollWidgetInitFromData = function (root, opts) {
 /* section up front. Both reuse this exact same code -- there is no       */
 /* separate/divergent scaffold-building logic for book mode.              */
 /* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+/* Diagram image loading with retry + fallback + a manual Retry control — */
+/* added 2026-09-15. Plain <img> elements have no built-in retry of any   */
+/* kind, so a single failed load (a jsDelivr blip, a dropped connection)  */
+/* used to stay broken until the section was remounted (nav away/back) or */
+/* the whole page refreshed — exactly the "broken diagram that fixes      */
+/* itself a while later" pattern reported live. This gives images the     */
+/* same resilience the JSON fetches above already have: a couple retries  */
+/* against the same URL, then one attempt against raw.githubusercontent.  */
+/* com if the URL is a jsDelivr "/gh/" URL, then — only if all of that     */
+/* still fails — an inline error message with its own "Retry" button, so  */
+/* recovering never requires a full page refresh.                        */
+/* ---------------------------------------------------------------------- */
+function ingersollMountDiagramImage(wrap, url) {
+  var img = document.createElement('img');
+  img.className = 'diagram-img';
+  img.alt = 'Diagram';
+  // Deliberately no loading="lazy" here (removed 2026-09-03) — see the
+  // detailed note this used to carry inline, preserved below in
+  // IngersollBuildSectionScaffold's own comments. decoding="async" is
+  // unrelated (only affects whether decode blocks the main thread) and
+  // is kept.
+  img.decoding = 'async';
+
+  var errorBox = document.createElement('div');
+  errorBox.className = 'diagram-error';
+  var errorMsg = document.createElement('div');
+  errorMsg.textContent = 'Unable to load this diagram.';
+  var retryBtn = document.createElement('button');
+  retryBtn.type = 'button';
+  retryBtn.className = 'diagram-retry-btn';
+  retryBtn.textContent = 'Retry';
+  errorBox.appendChild(errorMsg);
+  errorBox.appendChild(retryBtn);
+
+  wrap.appendChild(img);
+  wrap.appendChild(errorBox);
+
+  var RETRIES = 2;
+  var DELAY_MS = 900;
+  var attemptsLeft = RETRIES;
+  var triedFallback = false;
+
+  function showError() {
+    img.style.display = 'none';
+    errorBox.classList.add('active');
+  }
+
+  function tryLoad(src) {
+    img.style.display = '';
+    errorBox.classList.remove('active');
+    img.src = src;
+  }
+
+  img.addEventListener('error', function onDiagramError() {
+    if (attemptsLeft > 0) {
+      attemptsLeft--;
+      setTimeout(function () { tryLoad(url); }, DELAY_MS);
+      return;
+    }
+    if (!triedFallback) {
+      triedFallback = true;
+      var fallbackUrl = ingersollJsDelivrToRawGithub(url);
+      if (fallbackUrl) {
+        setTimeout(function () { tryLoad(fallbackUrl); }, DELAY_MS);
+        return;
+      }
+    }
+    showError();
+  });
+
+  retryBtn.addEventListener('click', function () {
+    attemptsLeft = RETRIES;
+    triedFallback = false;
+    tryLoad(url);
+  });
+
+  tryLoad(url);
+  return img;
+}
+
 window.IngersollBuildSectionScaffold = function (section, logoUrl) {
   function el(tag, className, text) {
     var e = document.createElement(tag);
@@ -964,27 +1125,26 @@ window.IngersollBuildSectionScaffold = function (section, logoUrl) {
 
   var diagramPanel = el('div', 'diagram-panel');
   var diagramWrap = el('div', 'diagram-wrap');
-  var img = el('img', 'diagram-img');
-  img.src = section.diagramUrl;
-  img.alt = 'Diagram';
-  // NOTE: deliberately no loading="lazy" here (removed 2026-09-03). It was
-  // added for the old per-widget-paste architecture, where up to 60+
-  // sections' images could all sit in the DOM on one page at once. Every
-  // live catalog is now book mode, which only ever mounts ONE section (and
-  // therefore one diagram image) at a time -- the problem lazy-loading
-  // solved no longer exists in production, and native loading="lazy" is
-  // intersection-based, which this project has already independently found
-  // does not reliably fire in Duda's runtime (see the IntersectionObserver
-  // note elsewhere in this file). Confirmed live: with loading="lazy", this
-  // image would sometimes never actually fetch at all -- img.complete stayed
-  // false and img.naturalWidth stayed 0 indefinitely even though the exact
-  // same URL loaded fine via a plain fetch() -- which is what produced the
-  // "diagram never loads, hotspots scattered over a blank panel" reports
-  // (B1278 sections, 8-3310 Alternator Assembly). Forcing eager-load fixed
-  // it instantly every time it was tested. decoding="async" is unrelated
-  // (it only affects whether decode blocks the main thread) and is kept.
-  img.decoding = 'async';
-  diagramWrap.appendChild(img);
+  // NOTE: deliberately no loading="lazy" (removed 2026-09-03). It was added
+  // for the old per-widget-paste architecture, where up to 60+ sections'
+  // images could all sit in the DOM on one page at once. Every live catalog
+  // is now book mode, which only ever mounts ONE section (and therefore one
+  // diagram image) at a time -- the problem lazy-loading solved no longer
+  // exists in production, and native loading="lazy" is intersection-based,
+  // which this project has already independently found does not reliably
+  // fire in Duda's runtime (see the IntersectionObserver note elsewhere in
+  // this file). Confirmed live: with loading="lazy", this image would
+  // sometimes never actually fetch at all -- img.complete stayed false and
+  // img.naturalWidth stayed 0 indefinitely even though the exact same URL
+  // loaded fine via a plain fetch() -- which is what produced the "diagram
+  // never loads, hotspots scattered over a blank panel" reports (B1278
+  // sections, 8-3310 Alternator Assembly). Forcing eager-load fixed it
+  // instantly every time it was tested.
+  //
+  // Loading itself now goes through ingersollMountDiagramImage() (above),
+  // which retries on failure, falls back to raw.githubusercontent.com, and
+  // shows an in-place "Retry" button rather than requiring a page refresh.
+  var img = ingersollMountDiagramImage(diagramWrap, section.diagramUrl);
   diagramPanel.appendChild(diagramWrap);
   diagramPanel.appendChild(el('div', 'tooltip'));
   spread.appendChild(diagramPanel);
@@ -1102,7 +1262,7 @@ window.IngersollCatalogPageInitFromData = function (container, manifestUrl, opts
     return;
   }
 
-  fetch(manifestUrl)
+  ingersollFetchWithFallback(manifestUrl, 2, 700)
     .then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return res.json();
@@ -1203,27 +1363,19 @@ window.IngersollCatalogBookInit = function (container, opts) {
     }
   }
 
-  // One retry after a short delay before surfacing an error — smooths over
-  // a single transient CDN/network blip (jsDelivr, mostly) instead of
-  // immediately showing "Unable to load this section..." for a fetch that
-  // would have succeeded a second later. Added 2026-09-03: none of these
-  // fetches had any retry before, so any one-off failure was permanent for
-  // that page view, matching reports of the error clearing up on its own
-  // after a manual refresh or two.
-  function fetchWithRetry(url, retriesLeft) {
-    return fetch(url).catch(function (err) {
-      if (retriesLeft > 0) {
-        return new Promise(function (resolve) { setTimeout(resolve, 800); })
-          .then(function () { return fetchWithRetry(url, retriesLeft - 1); });
-      }
-      throw err;
-    });
-  }
-
+  // Retries + a same-file fallback host before surfacing an error, so a
+  // transient CDN blip doesn't permanently fail this page view. Added
+  // 2026-09-03 as a single retry on network-level failures only; upgraded
+  // 2026-09-15 (see ingersollFetchWithRetry/ingersollFetchWithFallback near
+  // the top of this file) after confirming live, via a browser console
+  // capture, that jsDelivr can return a resolved-but-bad HTTP response
+  // (e.g. a genuine 403) that the original version never retried at all —
+  // only an actual dropped fetch() was retried before. That gap is exactly
+  // what matched the reported "random failed to load" pattern.
   function fetchJson(url, cacheKey) {
     var cached = readCache(cacheKey);
     if (cached) return Promise.resolve(cached);
-    return fetchWithRetry(url, 1)
+    return ingersollFetchWithFallback(url, 2, 700)
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -1436,10 +1588,28 @@ window.IngersollCatalogBookInit = function (container, opts) {
         // correct, clickable prev/next neighbors and a working Sections
         // dropdown to recover to a different section.
         resetMountPointKeepingNav();
+        var box = document.createElement('div');
+        box.setAttribute('style', 'padding:40px;text-align:center;color:#900;font-family:Georgia,serif');
         var msg = document.createElement('div');
-        msg.setAttribute('style', 'padding:40px;text-align:center;color:#900;font-family:Georgia,serif');
-        msg.textContent = 'Unable to load this section. Please try again, or refresh the page.';
-        mountPoint.appendChild(msg);
+        msg.textContent = 'Unable to load this section.';
+        box.appendChild(msg);
+        // Manual retry — added 2026-09-15 alongside the fetchJson
+        // retry/fallback upgrade above, so a section that still fails after
+        // all of that doesn't require a full page refresh to recover. Calls
+        // straight back into mountSection(idx) for this same section; idx
+        // is the exact index passed into this call of mountSection, closed
+        // over from the outer function, so it always retries the section
+        // that actually just failed, not whatever section number the
+        // navBar's prev/next buttons currently point at.
+        var retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.textContent = 'Retry';
+        retryBtn.setAttribute('style', 'margin-top:16px;background:var(--red);color:#fff;border:none;'
+          + 'border-radius:4px;padding:8px 22px;font-size:12px;font-weight:700;letter-spacing:.04em;'
+          + 'text-transform:uppercase;cursor:pointer;font-family:Georgia,serif');
+        retryBtn.addEventListener('click', function () { mountSection(idx); });
+        box.appendChild(retryBtn);
+        mountPoint.appendChild(box);
       });
   }
 
