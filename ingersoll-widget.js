@@ -621,7 +621,14 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     // on a narrow diagram (e.g. the tall, skinny ring/piston pages) shrinks
     // to an illegible sliver. Clamp to a sensible min/max instead of pure
     // percentage scaling, so every diagram gets a legible, clickable dot.
-    const size = Math.min(32, Math.max(18, wrapWidth * 0.0216));
+    // Optional per-section override (book-mode section JSON "dotSizePct"):
+    // the printed callout circle's diameter as a % of the diagram width, so
+    // dots match the circles on diagrams whose circles are drawn large.
+    // Sections without the field keep the original 18-32px behaviour.
+    const pct = parseFloat(root.dataset.dotSizePct);
+    const size = pct > 0
+      ? Math.min(96, Math.max(18, wrapWidth * pct / 100))
+      : Math.min(32, Math.max(18, wrapWidth * 0.0216));
     el.style.width = size + 'px';
     el.style.height = size + 'px';
     el.style.fontSize = Math.max(9, size * 0.4) + 'px';
@@ -1126,6 +1133,7 @@ window.IngersollBuildSectionScaffold = function (section, logoUrl) {
   }
 
   var root = el('div', 'ingersoll-catalog-widget');
+  if (section.dotSizePct > 0) root.dataset.dotSizePct = String(section.dotSizePct);
 
   // --- header ---
   var header = el('header');
