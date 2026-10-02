@@ -293,6 +293,13 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
     var key = normalize(partNo);
     if (!key) return null;
 
+    // Placeholder part numbers (NSS = not separately serviced, TBD, N/A,
+    // with optional footnote stars / stray digits like "NSS*", "NSS22") are
+    // never real SKUs -- skip the store lookup so they always render as
+    // NSS/O·L. Without this, "NSS" matched the real store product
+    // "NSS USED DIFFERENTIAL CASE" by name prefix (2026-10-01 bug report).
+    if (/^(NSS|TBD|N\/?A)\**\d*$/.test(key)) return null;
+
     var item = byNamePrefix[key] || bySku[key];
 
     if (!item) {
