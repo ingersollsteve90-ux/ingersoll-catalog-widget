@@ -560,11 +560,20 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     return normalizedVariants(h).map(withLive).every(v => !v.isInStock);
   }
 
+  // A hotspot entry with no numeric x/y is a "table-only" part: it gets a
+  // parts-table row (with live stock / Add to Cart) but no dot on the
+  // diagram. Used for sections whose diagram is too poor to place dots on
+  // (e.g. catalog 1236's first section). Entries with x/y are unaffected.
+  function hasDot(h) {
+    return typeof h.x === 'number' && typeof h.y === 'number';
+  }
+
   function buildHotspots() {
     const wrap = root.querySelector('.diagram-wrap');
     wrap.querySelectorAll('.hotspot').forEach(e => e.remove());
 
     hotspots.forEach((h, idx) => {
+      if (!hasDot(h)) return;
       const dot = document.createElement('div');
       const variants = normalizedVariants(h);
       dot.className = 'hotspot' + (hotspotIsOut(h) ? ' is-out' : '') + (variants.length > 1 ? ' has-variants' : '');
@@ -708,6 +717,7 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
       // before clicking, rather than guessing from a tightly-packed cluster.
       hotspots.forEach((h, idx) => {
         const zd = zpDotsContainer.children[idx];
+        if (!hasDot(h)) { zd.style.display = 'none'; return; }
         const dotX = (h.x / 100) * imgRect.width * ZOOM + bgX;
         const dotY = (h.y / 100) * imgRect.height * ZOOM + bgY;
         if (dotX < -12 || dotX > pw + 12 || dotY < -12 || dotY > ph + 12) {
