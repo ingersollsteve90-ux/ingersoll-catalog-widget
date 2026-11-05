@@ -325,6 +325,7 @@
     closeOffer(true);
     T = { mode: mode, ui: buildLayer(mode), dead: false, cleanups: [], total: mode === 'watch' ? 8 : 6 };
     if (mode === 'watch') T.cur = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.85 };
+    if (mode === 'watch') lockScroll();
     var onKey = function (e) { if (e.key === 'Escape') endTour('exit'); };
     document.addEventListener('keydown', onKey);
     T.cleanups.push(function () { document.removeEventListener('keydown', onKey); });
@@ -333,8 +334,31 @@
     run().catch(function (err) { if (!(err instanceof Cancelled)) { console.error('Ingersoll tour error', err); endTour('error'); } });
   }
 
+  // Watch mode: the visitor can't scroll the page (or the parts list) while
+  // the demo runs, so they never lose their place. The tour's own scrolling
+  // is unaffected. Released at the "That's it!" card and whenever the tour ends.
+  var SCROLL_KEYS = { ' ': 1, PageUp: 1, PageDown: 1, End: 1, Home: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 };
+  function blockScroll(e) { e.preventDefault(); }
+  function blockScrollKeys(e) { if (SCROLL_KEYS[e.key]) e.preventDefault(); }
+  var scrollLocked = false;
+  function lockScroll() {
+    if (scrollLocked) return;
+    scrollLocked = true;
+    window.addEventListener('wheel', blockScroll, { passive: false, capture: true });
+    window.addEventListener('touchmove', blockScroll, { passive: false, capture: true });
+    window.addEventListener('keydown', blockScrollKeys, { capture: true });
+  }
+  function unlockScroll() {
+    if (!scrollLocked) return;
+    scrollLocked = false;
+    window.removeEventListener('wheel', blockScroll, { capture: true });
+    window.removeEventListener('touchmove', blockScroll, { capture: true });
+    window.removeEventListener('keydown', blockScrollKeys, { capture: true });
+  }
+
   function endTour(reason) {
     if (!T) return;
+    unlockScroll();
     var t = T; t.dead = true; T = null;
     cancelAnimationFrame(t.raf);
     t.cleanups.forEach(function (fn) { try { fn(); } catch (e) {} });
@@ -387,21 +411,29 @@
   function topInset() {
     var now = Date.now();
     if (now - insetCache.t < 400) return insetCache.v;
-    var max = 0;
-    [0.15, 0.5, 0.85].forEach(function (fx) {
-      var els = document.elementsFromPoint ? document.elementsFromPoint(window.innerWidth * fx, 3) : [];
-      els.forEach(function (e0) {
-        for (var e = e0; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
-          if (e.closest && (e.closest('.ing-tour-layer') || e.closest('.ingersoll-catalog-widget'))) break;
-          var pos = getComputedStyle(e).position;
-          if (pos === 'fixed' || pos === 'sticky') {
-            var r = e.getBoundingClientRect();
-            if (r.top <= 4 && r.height < window.innerHeight * 0.4) max = Math.max(max, r.bottom);
-            break;
+    // Headers can be stacked (on caseingersollparts.com: the fixed red sale
+    // bar, then the sticky menu bar right under it), so keep probing just
+    // below whatever was found until no more pinned bars turn up.
+    var max = 0, y = 2;
+    for (var pass = 0; pass < 6; pass++) {
+      var found = max;
+      [0.1, 0.5, 0.9].forEach(function (fx) {
+        var els = document.elementsFromPoint ? document.elementsFromPoint(window.innerWidth * fx, y) : [];
+        els.forEach(function (e0) {
+          for (var e = e0; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+            if (e.closest && (e.closest('.ing-tour-layer') || e.closest('.ingersoll-catalog-widget'))) break;
+            var pos = getComputedStyle(e).position;
+            if (pos === 'fixed' || pos === 'sticky') {
+              var r = e.getBoundingClientRect();
+              if (r.top <= max + 4 && r.bottom > max && r.height < window.innerHeight * 0.4) found = Math.max(found, r.bottom);
+              break;
+            }
           }
-        }
+        });
       });
-    });
+      if (found <= max) break;
+      max = found; y = max + 2;
+    }
     insetCache = { t: now, v: max };
     return max;
   }
@@ -648,6 +680,7 @@
     if (!T) return;
     T.cur = null; T.ui.cursor.style.display = 'none';
     var blocker = T.ui.layer.querySelector('.ing-tour-blocker'); if (blocker) blocker.remove();
+    unlockScroll();
     setCard({ target: launch, pad: 4, text: '<strong>That’s it!</strong> Replay this tour anytime with the <strong>How to use this catalog</strong> button. Want to try it yourself?',
       buttons: [
         { label: 'Done', fn: function () { endTour('complete'); } },
@@ -904,9 +937,10 @@
     r = await waitFor(heldFor(function () { var p = q('.zoom-preview'); return p && p.classList.contains('active'); }, 1500));
     if (r !== 'skip') {
       setCard({ step: 3, target: function () { return q('.zoom-preview'); }, text: 'See the <strong>zoomed view</strong>? It follows your pointer so small numbers are easy to read.' });
-      await sleep(3200);
+      await sleep(1800);
     }
-    await settle();
+    // No wait-for-rest here: people naturally keep moving over the diagram,
+    // which is exactly where the next step (click a dot) happens anyway.
 
     // 4. Dot
     setCard({ step: 4, target: function () { return q('.diagram-wrap'); }, pad: 2, text: 'Click any <strong>numbered dot</strong> on the diagram.', buttons: [skipBtn] });
