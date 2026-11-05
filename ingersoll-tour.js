@@ -246,6 +246,12 @@
     if (tgt && tgt.isConnected) {
       r = tgt.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) r = null;
+      else {
+        // Mostly hidden (under the site header or scrolled off-screen)? Then
+        // drop the ring and park the card mid-screen instead of chasing it.
+        var shown = Math.min(r.bottom, window.innerHeight) - Math.max(r.top, topInset());
+        if (shown < Math.min(r.height, 40) * 0.6) r = null;
+      }
     }
     if (r) {
       var pad = T.pad == null ? 6 : T.pad;
@@ -300,6 +306,7 @@
     });
     if (!btns.children.length) btns.style.display = 'none';
     T.target = o.target || null;
+    T.cardAt = Date.now();
     T.pad = o.pad;
     T.side = !!o.side;
     if (o.step) track('catalog_tour_step', { tour_mode: T.mode, tour_step: o.step });
@@ -373,14 +380,60 @@
     setTimeout(function () { r.remove(); if (T) T.ui.cursor.classList.remove('press'); }, 600);
     return sleep(220);
   }
-  function inView(e, margin) {
-    var r = e.getBoundingClientRect(); margin = margin || 70;
-    return r.top >= margin && r.bottom <= window.innerHeight - margin;
+  // Height of the site's own fixed/sticky header (Duda's red sale banner +
+  // menu bar) covering the top of the window. Anything scrolled under it is
+  // hidden, so all tour scrolling and visibility checks start below it.
+  var insetCache = { t: 0, v: 0 };
+  function topInset() {
+    var now = Date.now();
+    if (now - insetCache.t < 400) return insetCache.v;
+    var max = 0;
+    [0.15, 0.5, 0.85].forEach(function (fx) {
+      var els = document.elementsFromPoint ? document.elementsFromPoint(window.innerWidth * fx, 3) : [];
+      els.forEach(function (e0) {
+        for (var e = e0; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+          if (e.closest && (e.closest('.ing-tour-layer') || e.closest('.ingersoll-catalog-widget'))) break;
+          var pos = getComputedStyle(e).position;
+          if (pos === 'fixed' || pos === 'sticky') {
+            var r = e.getBoundingClientRect();
+            if (r.top <= 4 && r.height < window.innerHeight * 0.4) max = Math.max(max, r.bottom);
+            break;
+          }
+        }
+      });
+    });
+    insetCache = { t: now, v: max };
+    return max;
   }
-  function ensureVisible(e, block) {
-    if (!e || inView(e)) return Promise.resolve();
-    e.scrollIntoView({ behavior: 'smooth', block: block || 'center' });
-    return sleep(650);
+  function inView(e, margin) {
+    var r = e.getBoundingClientRect(); margin = margin == null ? 12 : margin;
+    return r.top >= topInset() + margin && r.bottom <= window.innerHeight - margin;
+  }
+  // Scrolls any inner scrolling box (e.g. the parts list) so e is in its
+  // middle, without moving the page.
+  function scrollInner(e) {
+    for (var p = e.parentElement; p && p !== document.body; p = p.parentElement) {
+      var cs = getComputedStyle(p);
+      if (/(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight + 2) {
+        var pr = p.getBoundingClientRect(), r = e.getBoundingClientRect();
+        if (r.top < pr.top + 60 || r.bottom > pr.bottom - 10) {
+          p.scrollTo({ top: p.scrollTop + (r.top - pr.top) - (pr.height - r.height) / 2, behavior: 'smooth' });
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  async function ensureVisible(e, block) {
+    if (!e) return;
+    if (scrollInner(e)) await sleep(450);
+    if (inView(e)) return;
+    var inset = topInset(), r = e.getBoundingClientRect(), avail = window.innerHeight - inset;
+    var y = (block === 'start' || r.height > avail - 40)
+      ? r.top - inset - 10                         // line its top up just under the site header
+      : r.top - inset - (avail - r.height) / 2;    // center it in the visible area
+    window.scrollBy({ top: y, behavior: 'smooth' });
+    await sleep(650);
   }
   function hoverDiagram(x, y) {
     var wrap = q('.diagram-wrap');
@@ -505,8 +558,7 @@
     if (rowB) {
       var refB = rowB.dataset.ref;
       var rowBNow = function () { return q('.parts-row[data-ref="' + refB + '"]'); };
-      rowB.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await sleep(600);
+      await ensureVisible(rowB);
       setCard({ step: 5, target: rowBNow, pad: 2, text: 'It works the other way too — <strong>click a row</strong> in the list…', buttons: [skip] });
       await moveTo(pointOf(rowBNow, 0.35, 0.5), 1000);
       await sleep(1300);
@@ -550,7 +602,7 @@
 
     // Fallback (this section has nothing in stock): example product page in a pop-up.
     await runMockProduct(row, w, skip);
-    finishWatch();
+    await finishWatch();
   }
 
   async function runMockProduct(row, w, skip) {
@@ -589,9 +641,11 @@
     mock.remove();
   }
 
-  function finishWatch() {
+  async function finishWatch() {
     if (!T) return;
     var launch = q('.ing-tour-launch');
+    if (launch) await ensureVisible(launch, 'start');
+    if (!T) return;
     T.cur = null; T.ui.cursor.style.display = 'none';
     var blocker = T.ui.layer.querySelector('.ing-tour-blocker'); if (blocker) blocker.remove();
     setCard({ target: launch, pad: 4, text: '<strong>That’s it!</strong> Replay this tour anytime with the <strong>How to use this catalog</strong> button. Want to try it yourself?',
@@ -678,7 +732,7 @@
       await moveTo(pointOf(activeRow, 0.4, 0.5), 1000);
       await sleep(3200);
     }
-    finishWatch();
+    await finishWatch();
   }
 
   var resumeLock = false;
@@ -770,13 +824,38 @@
   function waitClick(match) {
     var tok = T;
     return new Promise(function (res, rej) {
-      function h(e) { if (match(e.target)) { done(); setTimeout(res, 50); } }
+      // Ignore clicks in the first moment after a new step appears, so a
+      // click meant for the previous step can't complete this one too.
+      function h(e) { if (Date.now() - (tok.cardAt || 0) < ARM_MS) return; if (match(e.target)) { done(); setTimeout(res, 50); } }
       function done() { document.removeEventListener('click', h, true); clearInterval(iv); }
       var iv = setInterval(function () { if (!alive(tok)) { done(); rej(new Cancelled()); } }, 250);
       document.addEventListener('click', h, true);
       tok.cleanups.push(done);
       tok.skip = function () { done(); res('skip'); };
     });
+  }
+  // Show-me pacing: a step only counts once the visitor has been doing it
+  // for a moment, and the next step only appears once the pointer has come
+  // to rest - so brushing across the diagram on the way somewhere else
+  // doesn't race through several steps at once.
+  var ARM_MS = 300, REST_MS = 900;
+  var lastMove = 0;
+  ['mousemove', 'touchmove', 'wheel', 'scroll'].forEach(function (ev) {
+    window.addEventListener(ev, function () { lastMove = Date.now(); }, { passive: true, capture: true });
+  });
+  async function settle(restMs) {
+    restMs = restMs || REST_MS;
+    var waited = 0;
+    while (Date.now() - lastMove < restMs && waited < 6000) { await sleep(150); waited += 150; }
+  }
+  // cond() must stay true for holdMs in a row (resets if it goes false).
+  function heldFor(cond, holdMs) {
+    var since = 0;
+    return function () {
+      if (!cond()) { since = 0; return false; }
+      if (!since) since = Date.now();
+      return Date.now() - since >= holdMs;
+    };
   }
   function waitFor(cond) {
     var tok = T;
@@ -800,7 +879,8 @@
     await ensureVisible(navBar() || navArrow(), 'start');
     setCard({ step: 1, target: navArrow, text: 'Click an <strong>arrow button</strong> to flip to the next (or previous) section.', buttons: [skipBtn] });
     r = await waitClick(function (t) { return closest(t, '.book-nav-prev,.book-nav-next,.section-nav-prev,.section-nav-next'); });
-    if (r !== 'skip') { setCard({ step: 1, target: function () { return q('.section-bar'); }, text: '✔ Nice — you’re now on a different section.' }); await sleep(1800); }
+    if (r !== 'skip') { setCard({ step: 1, target: function () { return q('.section-bar'); }, text: '✔ Nice — you’re now on a different section.' }); await sleep(2200); }
+    await settle();
 
     // 2. Sections list
     setCard({ step: 2, target: toggleBtn, text: 'Now click <strong>☰ Sections</strong> to see every section in this catalog.', buttons: [skipBtn] });
@@ -810,18 +890,23 @@
       setCard({ step: 2, target: openDropdown, pad: 4, text: 'Pick any section from the list (or click outside it to close).' });
       await waitFor(function () { return !openDropdown(); });
       await sleep(400);
+      // Picking a section loads it; wait for that before moving on.
+      var tw = 0; while (!(widget() && widget().querySelector('.hotspot')) && tw < 12000) { await sleep(200); tw += 200; }
     }
+    await settle();
 
     // 3. Magnifier
     await ensureVisible(q('.spread') || q('.diagram-wrap'), 'start');
     setCard({ step: 3, target: function () { return q('.diagram-wrap'); }, pad: 2, text: isTouch
       ? '<strong>Touch and drag your finger</strong> across the diagram.'
       : '<strong>Move your mouse</strong> slowly across the diagram.', buttons: [skipBtn] });
-    r = await waitFor(function () { var p = q('.zoom-preview'); return p && p.classList.contains('active'); });
+    // Must actually be exploring the diagram for ~1.5s, not just passing over it.
+    r = await waitFor(heldFor(function () { var p = q('.zoom-preview'); return p && p.classList.contains('active'); }, 1500));
     if (r !== 'skip') {
       setCard({ step: 3, target: function () { return q('.zoom-preview'); }, text: 'See the <strong>zoomed view</strong>? It follows your pointer so small numbers are easy to read.' });
       await sleep(3200);
     }
+    await settle();
 
     // 4. Dot
     setCard({ step: 4, target: function () { return q('.diagram-wrap'); }, pad: 2, text: 'Click any <strong>numbered dot</strong> on the diagram.', buttons: [skipBtn] });
@@ -830,8 +915,9 @@
       await sleep(600);
       await ensureVisible(q('.parts-row.active'));
       setCard({ step: 4, target: function () { return q('.parts-row.active'); }, pad: 2, text: '✔ That part is now <strong>highlighted in the list</strong>.' });
-      await sleep(2800);
+      await sleep(3000);
     }
+    await settle();
 
     // 5. Row
     setCard({ step: 5, target: function () { return q('.parts-panel'); }, pad: 0, text: 'Now click <strong>any row</strong> in the parts list.', buttons: [skipBtn] });
@@ -845,8 +931,9 @@
       await sleep(300);
       await ensureVisible(dotFor(clickedRef));
       setCard({ step: 5, target: function () { return dotFor(clickedRef); }, text: '✔ And its <strong>dot lights up</strong> on the diagram.' });
-      await sleep(2800);
+      await sleep(3000);
     }
+    await settle();
 
     // 6. Add to Cart (real navigation — we hand off to the back-link pill)
     var firstBtn = function () { var b = q('.parts-row.active .add-btn'); if (b && visible(b)) return b; var rs = demoRows(); return rs[0] ? rs[0].querySelector('.add-btn') : null; };
