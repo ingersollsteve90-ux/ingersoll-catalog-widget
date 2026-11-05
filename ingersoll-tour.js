@@ -42,6 +42,8 @@
   var K_SEEN = 'ingersollTourOffered_v1';
   var K_BACK = 'ingersollBackLink_v1';
   var K_HINT = 'ingersollTourBackHint_v1';
+  var K_RESUME = 'ingersollTourResume_v1'; // Watch demo continuing across page loads
+  var RESUME_TTL_MS = 3 * 60 * 1000;
 
   /* ---------------- small utilities ---------------- */
   function lsGet(k) { try { var r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } catch (e) { return null; } }
@@ -155,6 +157,7 @@
     '.ing-tour-mock .m-add{display:inline-block;background:#4A7C3F;color:#fff;border-radius:4px;padding:8px 16px;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.04em}',
     '.ing-tour-mock .m-ok{display:none;margin-top:10px;color:#4A7C3F;font-weight:700}',
     '.ing-tour-mock .m-ok.on{display:block}',
+    '.ing-tour-toast{position:fixed;transform:translateX(-50%);background:#4A7C3F;color:#fff;font:700 15px "Droid Serif",Georgia,serif;padding:9px 16px;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.3);animation:ingPop .25s ease-out;white-space:nowrap}',
     '.ing-tour-mock .m-foot{position:relative;height:58px;background:#fafaf8;border-top:1px solid #eee}',
     '.ing-tour-mock .m-foot .ing-back-pill{position:absolute;left:12px;bottom:10px;opacity:0;transition:opacity .3s}',
     '.ing-tour-mock .m-foot .ing-back-pill.on{opacity:1}',
@@ -303,18 +306,23 @@
   }
 
   function startTour(mode) {
+    if (!widget()) return;
+    lsDel(K_RESUME);
+    begin(mode, mode === 'watch' ? runWatch : runShow, true);
+  }
+
+  // Shared start-up for a fresh tour AND for a Watch demo resuming on the
+  // product page / back on the catalog after a real page load.
+  function begin(mode, run, fresh) {
     if (T) endTour('restart');
-    var w = widget();
-    if (!w) return;
     closeOffer(true);
-    T = { mode: mode, ui: buildLayer(mode), dead: false, cleanups: [], total: mode === 'watch' ? 7 : 6 };
+    T = { mode: mode, ui: buildLayer(mode), dead: false, cleanups: [], total: mode === 'watch' ? 8 : 6 };
     if (mode === 'watch') T.cur = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.85 };
     var onKey = function (e) { if (e.key === 'Escape') endTour('exit'); };
     document.addEventListener('keydown', onKey);
     T.cleanups.push(function () { document.removeEventListener('keydown', onKey); });
     T.raf = requestAnimationFrame(frameLoop);
-    track('catalog_tour_start', { tour_mode: mode });
-    var run = mode === 'watch' ? runWatch : runShow;
+    if (fresh) track('catalog_tour_start', { tour_mode: mode });
     run().catch(function (err) { if (!(err instanceof Cancelled)) { console.error('Ingersoll tour error', err); endTour('error'); } });
   }
 
@@ -327,6 +335,7 @@
     var mock = document.querySelector('.ing-tour-mock'); if (mock) mock.remove();
     if (openDropdown()) closeDropdown();
     var wrap = q('.diagram-wrap'); if (wrap) wrap.dispatchEvent(new MouseEvent('mouseleave'));
+    if (reason !== 'handoff') lsDel(K_RESUME);
     if (reason === 'complete') track('catalog_tour_complete', { tour_mode: t.mode });
     else if (reason === 'exit') track('catalog_tour_exit', { tour_mode: t.mode });
   }
@@ -450,6 +459,10 @@
       }
     }
 
+    // Make sure the section we demo on actually has something in stock
+    // (and that live stock data has finished loading) before going further.
+    await ensureStockedSection(2, skip);
+
     // 3. Magnifier
     var wrap = q('.diagram-wrap');
     await ensureVisible(q('.spread') || wrap, 'start');
@@ -464,6 +477,7 @@
     if (wrap) wrap.dispatchEvent(new MouseEvent('mouseleave'));
 
     // 4. Click a dot
+    await waitStock(15000);
     var rows = demoRows();
     var rowA = rows[Math.min(2, rows.length - 1)];
     var refA = rowA && rowA.dataset.ref;
@@ -507,7 +521,13 @@
     }
 
     // 6. Stock / Add to Cart
-    var row = rowB ? q('.parts-row[data-ref="' + rowB.dataset.ref + '"]') : null;
+    // Use the in-stock row itself (a ref can have several serial-number
+    // variant rows, and the first one isn't necessarily the in-stock one).
+    var row = null;
+    if (rowB) {
+      var inStockBtn = q('.parts-row[data-ref="' + rowB.dataset.ref + '"] .add-btn[href]');
+      row = inStockBtn ? inStockBtn.closest('.parts-row') : q('.parts-row[data-ref="' + rowB.dataset.ref + '"]');
+    }
     var btn = row && row.querySelector('.add-btn');
     if (row) {
       await ensureVisible(row);
@@ -515,15 +535,28 @@
       await moveTo(pointOf(btn || row, 0.5, 0.5), 1000);
       await sleep(3600);
     }
-    if (btn) {
+    if (btn && btn.getAttribute('href')) {
       setCard({ step: 6, target: btn, pad: 4, text: 'Click <strong>Add to Cart</strong> to open that part’s page.', buttons: [skip] });
       await sleep(1500);
       await clickFx();
-      await sleep(300);
+      // Hand off to the REAL product page. The demo's state goes in
+      // localStorage and the tour picks back up after the page loads
+      // (maybeResume -> runProductStage). Nothing is added to the cart.
+      recordCatalogState({ ref: row.dataset.ref, restore: true });
+      lsSet(K_RESUME, { stage: 'product', t: Date.now() });
+      var dest = btn.getAttribute('href');
+      endTour('handoff');
+      location.href = dest;
+      return;
     }
 
-    // 7. Product page + cart + back (demonstrated in a mock, so the tour never leaves the catalog)
-    var pn = row ? (row.querySelector('.partno-cell') || {}).textContent : 'C 11850';
+    // Fallback (this section has nothing in stock): example product page in a pop-up.
+    await runMockProduct(row, w, skip);
+    finishWatch();
+  }
+
+  async function runMockProduct(row, w, skip) {
+    var pn = row ? (row.querySelector('.partno-cell') || {}).textContent : '';
     var desc = row ? (row.querySelector('.desc-cell') || {}).textContent : '';
     var price = row && row.querySelector('.price') ? row.querySelector('.price').textContent : '';
     desc = (desc || '').replace(price, '').trim();
@@ -532,7 +565,7 @@
       '<div class="m-body"><div class="m-img">Photo</div><div>' +
       '<h4>' + esc(desc || 'Example part') + '</h4><div class="m-pn">Part # ' + esc(pn) + '</div>' +
       '<div class="m-price">' + esc(price || '$0.00') + '</div>' +
-      '<span class="m-qty">Qty&nbsp;1&nbsp;▾</span><span class="m-add">Add to Cart</span>' +
+      '<span class="m-add">Add to Cart</span>' +
       '<div class="m-ok">✓ Added to your cart</div></div></div>' +
       '<div class="m-foot"><div class="ing-back-pill"><a><strong>← Back to diagram</strong><small>' +
       esc(catalogLabel(w) + ' · ' + sectionTitle(w)) + '</small></a></div></div>');
@@ -541,7 +574,7 @@
     await sleep(30);
     mock.classList.add('on');
     var mAdd = mock.querySelector('.m-add');
-    setCard({ step: 7, target: mAdd, pad: 4, text: 'On the part’s page, choose a quantity and click <strong>Add to Cart</strong>.', buttons: [skip] });
+    setCard({ step: 7, target: mAdd, pad: 4, text: 'On the part’s page, click <strong>Add to Cart</strong>.', buttons: [skip] });
     await moveTo(pointOf(mAdd), 1000);
     await sleep(1400);
     await clickFx();
@@ -549,23 +582,181 @@
     await sleep(1200);
     var mPill = mock.querySelector('.ing-back-pill');
     mPill.classList.add('on');
-    setCard({ step: 7, target: mPill, pad: 4, text: 'Then click <strong>← Back to diagram</strong> (bottom corner of the page) to return to the exact section and part you were on. Your browser’s back button works too.', buttons: [skip] });
+    setCard({ step: 8, target: mPill, pad: 4, text: 'Then click <strong>← Back to diagram</strong> to return to the exact section and part you were on.', buttons: [skip] });
     await moveTo(pointOf(mPill), 1000);
     await sleep(3200);
     await clickFx();
     mock.classList.remove('on');
     await sleep(350);
     mock.remove();
+  }
 
-    // Finish
+  function finishWatch() {
+    if (!T) return;
     var launch = q('.ing-tour-launch');
     T.cur = null; T.ui.cursor.style.display = 'none';
     var blocker = T.ui.layer.querySelector('.ing-tour-blocker'); if (blocker) blocker.remove();
-    setCard({ target: launch, pad: 4, text: '<strong>That’s it!</strong> Replay this tour anytime with the <strong>How to use</strong> button. Want to try it yourself?',
+    setCard({ target: launch, pad: 4, text: '<strong>That’s it!</strong> Replay this tour anytime with the <strong>How to use this catalog</strong> button. Want to try it yourself?',
       buttons: [
         { label: 'Done', fn: function () { endTour('complete'); } },
         { label: 'Try it step by step', cls: 'primary', fn: function () { endTour('complete'); startTour('show'); } }
       ] });
+  }
+
+  /* ---------------- Watch demo, continued on the real product page ---------------- */
+  var DUDA_ADD_BTN = '[data-auto="add-to-cart-button"]';
+  var DUDA_CART = '[data-auto="ssr-cart-widget"], [data-auto="cart-icon"]';
+
+  function demoToast(nearEl, text) {
+    var r = nearEl.getBoundingClientRect();
+    var t = el('div', 'ing-tour-toast', text);
+    t.style.left = Math.round(r.left + r.width / 2) + 'px';
+    t.style.top = Math.round(r.bottom + 12) + 'px';
+    T.ui.layer.appendChild(t);
+    return t;
+  }
+
+  async function waitEl(sel, ms) {
+    var waited = 0, e;
+    while (!(e = document.querySelector(sel)) && waited < ms) { await sleep(200); waited += 200; }
+    return e;
+  }
+
+  async function runProductStage() {
+    var skip = { label: 'Skip tour', fn: function () { endTour('exit'); } };
+    var rec = lsGet(K_BACK);
+    var add = await waitEl(DUDA_ADD_BTN, 8000);
+    var title = document.querySelector('h1');
+    setCard({ step: 7, target: title || add, pad: 6, text: 'This is the <strong>part’s own page</strong> — photo, price and details.', buttons: [skip] });
+    if (title) await moveTo(pointOf(title, 0.4, 0.5), 1100);
+    await sleep(2600);
+
+    if (add && visible(add)) {
+      await ensureVisible(add);
+      setCard({ step: 7, target: add, pad: 4, text: 'Click <strong>Add to Cart</strong> to put it in your cart.<br><small style="color:#7a766c">(Just a demo — nothing is actually being added.)</small>', buttons: [skip] });
+      await moveTo(pointOf(add), 1000);
+      await sleep(1700);
+      await clickFx();
+      var toast = demoToast(add, '✓ Added to cart');
+      await sleep(2000);
+      toast.remove();
+    }
+
+    var cart = [].slice.call(document.querySelectorAll(DUDA_CART)).filter(visible)[0];
+    if (cart) {
+      var cr = cart.getBoundingClientRect();
+      if (cr.top < 0) { window.scrollTo({ top: 0, behavior: 'smooth' }); await sleep(600); }
+      setCard({ step: 7, target: cart, pad: 6, text: 'Your <strong>cart</strong> is up here — click it when you’re ready to check out.', buttons: [skip] });
+      await moveTo(pointOf(cart), 1100);
+      await sleep(2800);
+    }
+
+    maybeShowPill();
+    var pill = await waitEl('.ing-back-pill.left, .ing-back-pill.right', 2500);
+    setCard({ step: 8, target: pill, pad: 4, text: 'When you’re done, click <strong>← Back to diagram</strong> to go right back to the section and part you were on. (Your browser’s back button works too.)', buttons: [skip] });
+    if (pill) {
+      await moveTo(pointOf(pill, 0.35, 0.5), 1200);
+      await sleep(3400);
+      await clickFx();
+    } else {
+      await sleep(3000);
+    }
+    if (rec && rec.href) {
+      lsSet(K_RESUME, { stage: 'finish', t: Date.now(), href: rec.href });
+      endTour('handoff');
+      location.href = rec.href;
+    } else {
+      endTour('complete');
+    }
+  }
+
+  async function runFinishStage() {
+    var skip = { label: 'Skip tour', fn: function () { endTour('exit'); } };
+    var activeRow = function () { return q('.parts-row.active'); };
+    var waited = 0;
+    while (!activeRow() && waited < 4000) { await sleep(200); waited += 200; }
+    if (activeRow()) {
+      await ensureVisible(activeRow());
+      setCard({ step: 8, target: activeRow, pad: 2, text: '<strong>You’re right back where you left off</strong> — same section, with your part highlighted.', buttons: [skip] });
+      await moveTo(pointOf(activeRow, 0.4, 0.5), 1000);
+      await sleep(3200);
+    }
+    finishWatch();
+  }
+
+  var resumeLock = false;
+  function maybeResume() {
+    if (T || resumeLock) return;
+    var st = lsGet(K_RESUME);
+    if (!st) return;
+    if (Date.now() - st.t > RESUME_TTL_MS) { lsDel(K_RESUME); return; }
+    var w = widget();
+    if (st.stage === 'product' && !w && /\/product\//.test(location.pathname)) {
+      resumeLock = true; lsDel(K_RESUME);
+      begin('watch', function () { return runProductStage().then(function () { resumeLock = false; }, function (e) { resumeLock = false; throw e; }); });
+    } else if (st.stage === 'finish' && w && w.querySelector('.hotspot')) {
+      resumeLock = true; lsDel(K_RESUME);
+      begin('watch', function () { return runFinishStage().then(function () { resumeLock = false; }, function (e) { resumeLock = false; throw e; }); });
+    } else if (w && st.stage === 'product') {
+      lsDel(K_RESUME); // visitor came back to the catalog some other way
+    }
+  }
+
+
+  /* ---------------- In-stock guarantees for the Watch demo ---------------- */
+  // Stock data is "ready" once no row still shows the grey "Checking..." badge.
+  function stockReady() {
+    var w = widget();
+    return !!(w && w.querySelector('.parts-row') && !w.querySelector('.stock-btn.pending'));
+  }
+  function hasStock() {
+    var w = widget();
+    return !!(w && w.querySelector('.parts-row .add-btn[href]'));
+  }
+  async function waitStock(ms) {
+    var waited = 0;
+    while (!stockReady() && waited < ms) { await sleep(250); waited += 250; }
+    return stockReady();
+  }
+  async function waitSectionChange(oldTitle, ms) {
+    var waited = 0;
+    while (waited < ms) {
+      var nw = widget();
+      if (nw && sectionTitle(nw) !== oldTitle && nw.querySelector('.hotspot')) return true;
+      await sleep(200); waited += 200;
+    }
+    return false;
+  }
+  // Makes sure the open section has at least one in-stock part. If it
+  // doesn't, quietly opens the next sections (via the Sections list) until
+  // one does, trying at most MAX_TRIES so a catalog with nothing in stock
+  // never loops forever (the demo then falls back to the example pop-up).
+  var MAX_STOCK_TRIES = 8;
+  async function ensureStockedSection(step, skip) {
+    if (!(await waitStock(15000))) return false;
+    if (hasStock()) return true;
+    var tog = toggleBtn(); if (!tog) return false;
+    tog.click(); await sleep(350);
+    var dd = openDropdown(); if (!dd) return false;
+    var n = dd.children.length, cur = 0;
+    for (var i = 0; i < n; i++) if (dd.children[i].style.fontWeight === '700') cur = i;
+    closeDropdown(); await sleep(250);
+    for (var k = 1; k < n && k <= MAX_STOCK_TRIES; k++) {
+      setCard({ step: step, text: 'Nothing in this section is in stock right now — finding one that is…', buttons: [skip] });
+      tog = toggleBtn(); if (!tog) return false;
+      tog.click(); await sleep(350);
+      dd = openDropdown(); if (!dd) return false;
+      var item = dd.children[(cur + k) % n];
+      var oldTitle = sectionTitle(widget());
+      item.click();
+      await waitSectionChange(oldTitle, 12000);
+      if ((await waitStock(15000)) && hasStock()) {
+        setCard({ step: step, text: 'Here’s <strong>' + esc(sectionTitle(widget())) + '</strong>.', buttons: [skip] });
+        await sleep(900);
+        return true;
+      }
+    }
+    return false;
   }
 
   /* ---------------- Show-me mode ---------------- */
@@ -818,9 +1009,11 @@
       var key = here() + '|' + sectionTitle(w);
       if (key !== lastSectionKey && w.querySelector('.hotspot')) { lastSectionKey = key; recordCatalogState(); }
       maybeRestoreSelection();
-      maybeOffer();
+      maybeResume();
+      if (!lsGet(K_RESUME)) maybeOffer();
     } else {
       maybeShowPill();
+      maybeResume();
     }
   }
   function schedule(ms) { if (!scanTimer) scanTimer = setTimeout(scan, ms || 250); }
