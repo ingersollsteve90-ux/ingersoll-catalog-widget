@@ -35,7 +35,7 @@
     offerDelayMs: 1500,
     backLinkEnabled: true,
     backLinkMaxAgeMs: 3 * 60 * 60 * 1000,  // pill shows for 3h after last catalog use
-    backLinkPosition: 'left',       // 'left' or 'right' (bottom corner)
+    backLinkPosition: 'right',      // 'left' or 'right' (bottom corner)
     zBase: 2147483000
   }, window.IngersollTourConfig || {});
 
@@ -150,19 +150,35 @@
     '.ing-tour-mock .m-foot .ing-back-pill.on{opacity:1}',
     /* back-to-diagram pill (real one + mock copy) */
     '.ing-back-pill{position:fixed;bottom:18px;z-index:' + (Z - 10) + ';display:flex;align-items:center;gap:4px;background:#2D2E32;color:#fff;border-left:4px solid #C8221A;border-radius:24px;box-shadow:0 6px 20px rgba(0,0,0,.3);font:14px/1.2 "Droid Serif",Georgia,serif;max-width:calc(100vw - 36px)}',
-    '.ing-back-pill.left{left:18px}.ing-back-pill.right{right:18px}',
     '.ing-back-pill a{color:#fff;text-decoration:none;padding:9px 6px 9px 14px;display:block;min-width:0}',
     '.ing-back-pill a strong{display:block;font-size:14px}',
     '.ing-back-pill a small{display:block;font-size:11px;color:#bbb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62vw}',
     '.ing-back-pill button{background:none;border:0;color:#999;font-size:18px;cursor:pointer;padding:6px 12px 6px 4px}',
+    /* the real (site-wide) pill: larger than the mock copy inside the demo */
+    '.ing-back-pill.left,.ing-back-pill.right{bottom:24px;border-left-width:6px;border-radius:34px;box-shadow:0 8px 28px rgba(0,0,0,.4);animation:ingPillIn .45s ease-out}',
+    '.ing-back-pill.left{left:24px}.ing-back-pill.right{right:24px}',
+    '.ing-back-pill.left a,.ing-back-pill.right a{padding:14px 8px 14px 22px}',
+    '.ing-back-pill.left a strong,.ing-back-pill.right a strong{font-size:19px}',
+    '.ing-back-pill.left a small,.ing-back-pill.right a small{font-size:13px;margin-top:3px}',
+    '.ing-back-pill.left button,.ing-back-pill.right button{font-size:22px;padding:8px 16px 8px 6px}',
+    '.ing-back-pill.left:hover,.ing-back-pill.right:hover{background:#C8221A}',
+    '@keyframes ingPillIn{from{transform:translateY(30px);opacity:0}to{transform:none;opacity:1}}',
+    '@media(max-width:640px){.ing-back-pill.left a strong,.ing-back-pill.right a strong{font-size:17px}.ing-back-pill.left,.ing-back-pill.right{bottom:16px}.ing-back-pill.left{left:12px}.ing-back-pill.right{right:12px}}',
     '.ing-back-pill.pulse{animation:ingTourPulse 1.4s ease-in-out infinite;outline-color:#FFD700}',
-    '.ing-back-hint{position:fixed;bottom:84px;z-index:' + (Z - 10) + ';background:#FFD700;color:#1A1A1A;font:600 13px Georgia,serif;padding:8px 12px;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.25);max-width:260px}',
-    '.ing-back-hint.left{left:18px}.ing-back-hint.right{right:18px}',
+    '.ing-back-hint{position:fixed;bottom:104px;z-index:' + (Z - 10) + ';background:#FFD700;color:#1A1A1A;font:600 13px Georgia,serif;padding:8px 12px;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.25);max-width:260px}',
+    '.ing-back-hint.left{left:24px}.ing-back-hint.right{right:24px}',
     /* first-visit offer */
-    '.ing-tour-offer{position:fixed;right:18px;bottom:18px;z-index:' + (Z - 5) + ';width:320px;max-width:calc(100vw - 36px);background:#fff;border-radius:8px;border-top:4px solid #C8221A;box-shadow:0 10px 34px rgba(0,0,0,.3);padding:14px 16px;font:14px/1.45 "Droid Serif",Georgia,serif;color:#1A1A1A}',
-    '.ing-tour-offer h5{margin:0 0 4px;font-size:16px}',
-    '.ing-tour-offer p{margin:0 0 10px;color:#3D3D3D;font-size:13px}',
-    '.ing-tour-offer .t-btns{display:flex;flex-wrap:wrap;gap:8px}',
+    '.ing-tour-offer-bg{position:fixed;inset:0;z-index:' + (Z - 5) + ';background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;animation:ingFade .25s ease-out}',
+    '.ing-tour-offer{width:480px;max-width:100%;background:#fff;border-radius:10px;border-top:6px solid #C8221A;box-shadow:0 18px 60px rgba(0,0,0,.45);padding:26px 28px 22px;font:16px/1.5 "Droid Serif",Georgia,serif;color:#1A1A1A;text-align:center;position:relative;animation:ingPop .3s ease-out}',
+    '.ing-tour-offer .o-x{position:absolute;top:8px;right:12px;background:none;border:0;font-size:26px;line-height:1;color:#9A968C;cursor:pointer}',
+    '.ing-tour-offer .o-icon{width:54px;height:54px;margin:0 auto 10px;border-radius:50%;background:#FFD700;color:#1A1A1A;display:flex;align-items:center;justify-content:center;font:700 30px Georgia,serif}',
+    '.ing-tour-offer h5{margin:0 0 8px;font-size:23px;line-height:1.25}',
+    '.ing-tour-offer p{margin:0 0 20px;color:#3D3D3D;font-size:16px}',
+    '.ing-tour-offer .t-btns{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}',
+    '.ing-tour-offer .t-btns .ing-tour-btn{font-size:16px;padding:12px 18px;flex:1 1 180px}',
+    '.ing-tour-offer .o-skip{display:inline-block;margin-top:14px;background:none;border:0;color:#7a766c;font:14px Georgia,serif;text-decoration:underline;cursor:pointer}',
+    '@keyframes ingFade{from{opacity:0}to{opacity:1}}',
+    '@keyframes ingPop{from{transform:scale(.92);opacity:0}to{transform:none;opacity:1}}',
     '@media (prefers-reduced-motion: reduce){.ing-tour-ring,.ing-back-pill.pulse{animation:none}}'
   ].join('\n');
   var styleEl = el('style'); styleEl.textContent = css; document.head.appendChild(styleEl);
@@ -609,21 +625,34 @@
   var offerEl = null;
   function closeOffer(markSeen) {
     if (offerEl) { offerEl.remove(); offerEl = null; }
+    document.removeEventListener('keydown', offerKey);
     if (markSeen) lsSet(K_SEEN, { t: Date.now() });
   }
+  function offerKey(e) { if (e.key === 'Escape') closeOffer(true); }
   function offerCard(title, body, dismissLabel) {
     closeOffer(false);
-    offerEl = el('div', 'ing-tour-offer',
-      '<h5>' + title + '</h5><p>' + body + '</p><div class="t-btns"></div>');
-    var btns = offerEl.querySelector('.t-btns');
+    document.addEventListener('keydown', offerKey);
+    // Centered card over a dimmed page. Clicking the dimmed area, the x,
+    // the text link, or pressing Esc all close it.
+    offerEl = el('div', 'ing-tour-offer-bg');
+    var card = el('div', 'ing-tour-offer',
+      '<button type="button" class="o-x" aria-label="Close">&times;</button>' +
+      '<div class="o-icon">?</div><h5>' + title + '</h5><p>' + body + '</p><div class="t-btns"></div>' +
+      '<button type="button" class="o-skip">' + dismissLabel + '</button>');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    offerEl.appendChild(card);
+    var btns = card.querySelector('.t-btns');
     [['▶ Watch a 1-min demo', 'primary', function () { startTour('watch'); }],
-     ['Show me step by step', 'go', function () { startTour('show'); }],
-     [dismissLabel, '', function () { closeOffer(true); }]].forEach(function (d) {
+     ['Show me step by step', 'go', function () { startTour('show'); }]].forEach(function (d) {
       var b = el('button', 'ing-tour-btn ' + d[1], d[0]); b.type = 'button';
       b.onclick = function () { closeOffer(true); d[2](); };
       btns.appendChild(b);
     });
+    card.querySelector('.o-x').onclick = card.querySelector('.o-skip').onclick = function () { closeOffer(true); };
+    offerEl.addEventListener('click', function (e) { if (e.target === offerEl) closeOffer(true); });
     document.body.appendChild(offerEl);
+    var b0 = btns.querySelector('.primary'); if (b0) b0.focus();
   }
   function openChooser() {
     offerCard('How to use this catalog', 'Watch a quick demo, or let us walk you through it one click at a time.', 'Cancel');
