@@ -544,9 +544,7 @@
       // (maybeResume -> runProductStage). Nothing is added to the cart.
       recordCatalogState({ ref: row.dataset.ref, restore: true });
       lsSet(K_RESUME, { stage: 'product', t: Date.now() });
-      var dest = btn.getAttribute('href');
-      endTour('handoff');
-      location.href = dest;
+      handOff(btn.getAttribute('href'));
       return;
     }
 
@@ -663,8 +661,7 @@
     }
     if (rec && rec.href) {
       lsSet(K_RESUME, { stage: 'finish', t: Date.now(), href: rec.href });
-      endTour('handoff');
-      location.href = rec.href;
+      handOff(rec.href);
     } else {
       endTour('complete');
     }
@@ -685,8 +682,14 @@
   }
 
   var resumeLock = false;
+  var handingOff = false; // true from the moment the demo navigates away until the page unloads
+  function handOff(url) {
+    handingOff = true;
+    endTour('handoff');
+    location.href = url;
+  }
   function maybeResume() {
-    if (T || resumeLock) return;
+    if (T || resumeLock || handingOff) return;
     var st = lsGet(K_RESUME);
     if (!st) return;
     if (Date.now() - st.t > RESUME_TTL_MS) { lsDel(K_RESUME); return; }
@@ -697,8 +700,11 @@
     } else if (st.stage === 'finish' && w && w.querySelector('.hotspot')) {
       resumeLock = true; lsDel(K_RESUME);
       begin('watch', function () { return runFinishStage().then(function () { resumeLock = false; }, function (e) { resumeLock = false; throw e; }); });
-    } else if (w && st.stage === 'product') {
-      lsDel(K_RESUME); // visitor came back to the catalog some other way
+    } else if (w && st.stage === 'product' && Date.now() - st.t > 20000) {
+      // Visitor came back to the catalog some other way. The 20s grace matters:
+      // this same catalog page is still alive while the browser is loading the
+      // product page, and must NOT erase the hand-off note in that window.
+      lsDel(K_RESUME);
     }
   }
 
@@ -1000,6 +1006,7 @@
   var lastSectionKey = null, scanTimer = null, lastPath = here();
   function scan() {
     scanTimer = null;
+    if (handingOff) return; // page is unloading for a demo hand-off; leave everything alone
     var w = widget();
     var onCatalogPage = !!document.querySelector('.ingersoll-book-shell, .ingersoll-catalog-widget');
     if (!w && onCatalogPage) return; // book mode is between sections ("Loading section..."), not a new page
