@@ -108,12 +108,22 @@
   /* ---------------- styles ---------------- */
   var Z = CFG.zBase;
   var css = [
-    '.ing-tour-launch{margin-left:14px;flex:0 0 auto;background:transparent;border:1px solid #8a8a8a;color:#fff;border-radius:16px;padding:5px 12px;font:600 12px "Droid Serif",Georgia,serif;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}',
-    '.ing-tour-launch:hover{background:#C8221A;border-color:#C8221A}',
-    '.ing-tour-launch b{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#FFD700;color:#1A1A1A;font:700 12px Georgia,serif}',
-    '@media(max-width:640px){.ing-tour-launch span{display:none}.ing-tour-launch{padding:4px}}',
+    /* "How to use" button: brand red #FD0100, centered in the catalog header on
+       desktop (absolute so it never shifts the logo/title/breadcrumb), inline on
+       the right on narrower screens where there's no room in the middle. */
+    '.ingersoll-catalog-widget header{position:relative}',
+    '.ing-tour-launch{margin-left:14px;flex:0 0 auto;background:#FD0100;border:2px solid #FD0100;color:#fff;border-radius:24px;padding:8px 20px 8px 10px;font:700 15px/1 "Droid Serif",Georgia,serif;letter-spacing:.02em;cursor:pointer;display:inline-flex;align-items:center;gap:9px;white-space:nowrap;box-shadow:0 3px 12px rgba(253,1,0,.45);transition:background .15s,transform .15s,box-shadow .15s;animation:ingLaunchPulse 1.6s ease-in-out 1s 3}',
+    '.ing-tour-launch:hover{background:#d10000;border-color:#fff;transform:translateY(-1px);box-shadow:0 5px 16px rgba(253,1,0,.6)}',
+    '.ing-tour-launch b{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#fff;color:#FD0100;font:700 16px Georgia,serif}',
+    '@keyframes ingLaunchPulse{0%,100%{box-shadow:0 3px 12px rgba(253,1,0,.45),0 0 0 0 rgba(253,1,0,.6)}50%{box-shadow:0 3px 12px rgba(253,1,0,.45),0 0 0 10px rgba(253,1,0,0)}}',
+    '@media(min-width:900px){.ing-tour-launch{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin:0}.ing-tour-launch:hover{transform:translate(-50%,calc(-50% - 1px))}}',
+    '.ing-tour-launch .l-short{display:none}',
+    '@media(max-width:640px){.ing-tour-launch .l-long{display:none}.ing-tour-launch .l-short{display:inline}}',
+    '@media(max-width:640px){.ing-tour-launch{padding:6px 12px 6px 6px;font-size:13px;gap:6px}.ing-tour-launch b{width:20px;height:20px;font-size:13px}}',
     '.ing-tour-layer{position:fixed;inset:0;z-index:' + Z + ';pointer-events:none}',
     '.ing-tour-blocker{position:fixed;inset:0;pointer-events:auto;background:transparent}',
+    '.ing-tour-card.nudge{animation:ingNudge .45s ease}',
+    '@keyframes ingNudge{20%,60%{margin-left:-8px}40%,80%{margin-left:8px}}',
     '.ing-tour-ring{position:fixed;border:3px solid #FFD700;border-radius:8px;transition:left .35s ease,top .35s ease,width .35s ease,height .35s ease,opacity .2s;box-shadow:0 0 0 4px rgba(200,34,26,.55);animation:ingTourPulse 1.4s ease-in-out infinite;opacity:0}',
     '.ing-tour-ring.dim{box-shadow:0 0 0 4px rgba(200,34,26,.55),0 0 0 9999px rgba(0,0,0,.42)}',
     '@keyframes ingTourPulse{0%,100%{outline:0 solid rgba(255,215,0,.6);outline-offset:0}50%{outline:6px solid rgba(255,215,0,0);outline-offset:6px}}',
@@ -179,7 +189,7 @@
     '.ing-tour-offer .o-skip{display:inline-block;margin-top:14px;background:none;border:0;color:#7a766c;font:14px Georgia,serif;text-decoration:underline;cursor:pointer}',
     '@keyframes ingFade{from{opacity:0}to{opacity:1}}',
     '@keyframes ingPop{from{transform:scale(.92);opacity:0}to{transform:none;opacity:1}}',
-    '@media (prefers-reduced-motion: reduce){.ing-tour-ring,.ing-back-pill.pulse{animation:none}}'
+    '@media (prefers-reduced-motion: reduce){.ing-tour-ring,.ing-back-pill.pulse,.ing-tour-launch{animation:none}}'
   ].join('\n');
   var styleEl = el('style'); styleEl.textContent = css; document.head.appendChild(styleEl);
 
@@ -203,8 +213,13 @@
     var layer = el('div', 'ing-tour-layer');
     if (mode === 'watch') {
       var blocker = el('div', 'ing-tour-blocker');
-      blocker.title = 'Click to stop the tour';
-      blocker.addEventListener('click', function () { endTour('exit'); });
+      // Clicks during the demo are ignored (they used to end the tour,
+      // which customers did by accident while trying to "click through").
+      // A click just nudges the card so they see where Skip tour is.
+      blocker.addEventListener('click', function () {
+        if (!T) return;
+        var c = T.ui.card; c.classList.remove('nudge'); void c.offsetWidth; c.classList.add('nudge');
+      });
       layer.appendChild(blocker);
     }
     var ring = el('div', 'ing-tour-ring' + (mode === 'show' ? ' dim' : ''));
@@ -367,7 +382,7 @@
     var skip = { label: 'Skip tour', fn: function () { endTour('exit'); } };
     var w = widget();
 
-    setCard({ text: '<strong>Here’s how to find and order parts</strong> in about a minute. Sit back and watch — click anywhere to stop.', buttons: [skip] });
+    setCard({ text: '<strong>Here’s how to find and order parts</strong> in about a minute. Sit back and watch — it plays by itself. Use <strong>Skip tour</strong> to stop.', buttons: [skip] });
     await sleep(3200);
 
     // 1. Section arrows
@@ -386,12 +401,54 @@
     if (tog) tog.click();
     await sleep(450);
     T.target = openDropdown; T.pad = 4;
-    setCard({ step: 2, target: openDropdown, pad: 4, text: 'Every section is listed here — click one to open it.', buttons: [skip] });
     var dd = openDropdown();
-    if (dd) await moveTo(pointOf(dd, 0.5, 0.3), 800);
-    await sleep(2600);
-    closeDropdown();
-    await sleep(300);
+    if (dd) {
+      var items = [].slice.call(dd.children);
+      var scrolls = dd.scrollHeight > dd.clientHeight + 4;
+      setCard({ step: 2, target: openDropdown, pad: 4, side: true, text: scrolls
+        ? 'Every section is listed here. <strong>Scroll down</strong> to see them all…'
+        : 'Every section is listed here.', buttons: [skip] });
+      await moveTo(pointOf(dd, 0.5, 0.25), 800);
+      await sleep(1300);
+      // Pick a section near the bottom that isn't the one already open.
+      var pick = null;
+      for (var pi = items.length - 2; pi <= items.length && !pick; pi++) {
+        var cand = items[(pi + items.length) % items.length];
+        if (cand && cand.style.fontWeight !== '700') pick = cand;
+      }
+      if (scrolls && pick) {
+        var targetTop = Math.max(0, Math.min(pick.offsetTop - dd.clientHeight * 0.55, dd.scrollHeight - dd.clientHeight));
+        var startTop = dd.scrollTop, t0 = performance.now(), tok = T;
+        // Smooth-scroll the list while the pointer drifts down with it.
+        await moveTo(pointOf(dd, 0.5, 0.8), 1800, function () {
+          var k = Math.min(1, (performance.now() - t0) / 1800);
+          if (alive(tok)) dd.scrollTop = startTop + (targetTop - startTop) * ease(k);
+        });
+        dd.scrollTop = targetTop;
+        await sleep(500);
+      }
+      if (pick) {
+        setCard({ step: 2, target: pick, pad: 2, side: true, text: 'Click a section to open it.', buttons: [skip] });
+        await moveTo(pointOf(pick, 0.35, 0.5), 900);
+        await sleep(1000);
+        await clickFx();
+        var oldTitle = sectionTitle(widget());
+        pick.click();
+        setCard({ step: 2, text: 'Opening <strong>' + esc(pick.textContent) + '</strong>…', buttons: [skip] });
+        // Wait for book mode to fetch + build the new section (gives up after 12s).
+        var waited = 0;
+        while (waited < 12000) {
+          var nw = widget();
+          if (nw && sectionTitle(nw) !== oldTitle && nw.querySelector('.hotspot')) break;
+          await sleep(200); waited += 200;
+        }
+        await sleep(700);
+      } else {
+        await sleep(1500);
+        closeDropdown();
+        await sleep(300);
+      }
+    }
 
     // 3. Magnifier
     var wrap = q('.diagram-wrap');
@@ -613,7 +670,7 @@
     for (var i = 0; i < ws.length; i++) {
       var hdr = ws[i].querySelector('header');
       if (!hdr || hdr.querySelector('.ing-tour-launch')) continue;
-      var b = el('button', 'ing-tour-launch', '<b>?</b><span>How to use</span>');
+      var b = el('button', 'ing-tour-launch', '<b>?</b><span class="l-long">How to use this catalog</span><span class="l-short">How to use</span>');
       b.type = 'button';
       b.title = 'How to use this catalog';
       b.setAttribute('aria-label', 'How to use this catalog');
@@ -753,6 +810,8 @@
   function scan() {
     scanTimer = null;
     var w = widget();
+    var onCatalogPage = !!document.querySelector('.ingersoll-book-shell, .ingersoll-catalog-widget');
+    if (!w && onCatalogPage) return; // book mode is between sections ("Loading section..."), not a new page
     if (w) {
       addLaunchButtons();
       removePill();
@@ -761,7 +820,6 @@
       maybeRestoreSelection();
       maybeOffer();
     } else {
-      if (T) endTour('navigated');
       maybeShowPill();
     }
   }
@@ -770,7 +828,7 @@
   function boot() {
     new MutationObserver(function () { schedule(250); }).observe(document.body, { childList: true, subtree: true });
     setInterval(function () {
-      if (here() !== lastPath) { lastPath = here(); lastSectionKey = null; removePill(); schedule(1200); }
+      if (here() !== lastPath) { lastPath = here(); lastSectionKey = null; removePill(); if (T) endTour('navigated'); schedule(1200); }
     }, 800);
     schedule(1200);
   }
