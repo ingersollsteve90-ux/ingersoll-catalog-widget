@@ -639,7 +639,9 @@
 
   async function runMockProduct(row, w, skip) {
     var pn = row ? (row.querySelector('.partno-cell') || {}).textContent : '';
-    var desc = row ? (row.querySelector('.desc-cell') || {}).textContent : '';
+    var descEl = row && row.querySelector('.desc-cell') ? row.querySelector('.desc-cell').cloneNode(true) : null;
+    if (descEl) [].forEach.call(descEl.querySelectorAll('.sub-note'), function (n) { n.remove(); });
+    var desc = descEl ? descEl.textContent : '';
     var price = row && row.querySelector('.price') ? row.querySelector('.price').textContent : '';
     desc = (desc || '').replace(price, '').trim();
     var mock = el('div', 'ing-tour-mock',

@@ -266,53 +266,72 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
     }
   }
 
+  /* -------------------------------------------------------------------- */
+  /* Superseded part numbers (added 2026-11-23). Many catalog callouts    */
+  /* print an OLD part number that Case/Ingersoll later replaced.         */
+  /* subs-map.json (same repo and commit as this file) maps each old      */
+  /* number to the store part that replaced it, built from the 2004 Parts */
+  /* Substitution List with Steve's 2026-11-09 review applied. lookup()  */
+  /* uses it like this:                                                   */
+  /*   - Old number not in the store, or out of stock, and the newer part */
+  /*     IS in stock -> show the newer part (replacedBy note + its link). */
+  /*   - Old number not in the store at all -> show the newer part even   */
+  /*     if it's out of stock (better than "Not Sold Sep.").              */
+  /*   - Old number in stock AND newer part in stock -> keep the old part */
+  /*     and add a "newer part number also available" note.               */
+  /* If the map can't load, everything behaves exactly as before.         */
+  /* -------------------------------------------------------------------- */
+  var subsMap = {};
+  var resolved = {};
+
+  function subsMapUrl() {
+    if (window.IngersollEnv.subsMapUrl) return window.IngersollEnv.subsMapUrl;
+    var src = (document.currentScript && document.currentScript.src) || '';
+    if (!src) {
+      var s = document.querySelector('script[src*="ingersoll-widget.js"]');
+      src = s ? s.src : '';
+    }
+    return src ? src.replace(/ingersoll-widget\.js(\?.*)?$/, 'subs-map.json') : null;
+  }
+  var SUBS_MAP_URL = subsMapUrl(); // read now: document.currentScript is only set while this file first runs
+
+  function loadSubsMap() {
+    if (!SUBS_MAP_URL) return Promise.resolve();
+    var env = window.IngersollEnv;
+    return ingersollFetchWithFallback(SUBS_MAP_URL, env.fetchRetries, env.fetchRetryDelayMs)
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) { subsMap = (data && data.map) || {}; resolved = {}; })
+      .catch(function (err) {
+        console.warn('Ingersoll: superseded-part map unavailable; old numbers will not redirect.', err);
+      });
+  }
+
   function load() {
     if (loadPromise) return loadPromise;
 
+    var mapPromise = loadSubsMap();
     var cached = readCache();
+    var catalogPromise;
     if (cached) {
       cache = cached;
       indexItems(cached);
-      loadPromise = Promise.resolve(cached);
-      return loadPromise;
+      catalogPromise = Promise.resolve(cached);
+    } else {
+      catalogPromise = fetchAllPages().then(function (items) {
+        cache = items;
+        indexItems(items);
+        writeCache(items);
+        return items;
+      });
     }
-
-    loadPromise = fetchAllPages().then(function (items) {
-      cache = items;
-      indexItems(items);
-      writeCache(items);
-      return items;
+    loadPromise = Promise.all([catalogPromise, mapPromise]).then(function (r) {
+      resolved = {};
+      return r[0];
     });
     return loadPromise;
   }
 
-  // Returns { found, name, description, price, status, url } or null.
-  // null reliably means NSS/O·L for this project (see note above).
-  function lookup(partNo) {
-    if (!cache) return null;
-    var key = normalize(partNo);
-    if (!key) return null;
-
-    // Placeholder part numbers (NSS = not separately serviced, TBD, N/A,
-    // with optional footnote stars / stray digits like "NSS*", "NSS22") are
-    // never real SKUs -- skip the store lookup so they always render as
-    // NSS/O·L. Without this, "NSS" matched the real store product
-    // "NSS USED DIFFERENTIAL CASE" by name prefix (2026-10-01 bug report).
-    if (/^(NSS|TBD|N\/?A)\**\d*$/.test(key)) return null;
-
-    var item = byNamePrefix[key] || bySku[key];
-
-    if (!item) {
-      item = cache.find(function (it) {
-        var d = it && it.data;
-        if (!d) return false;
-        return normalize(d.name).indexOf(key) !== -1 ||
-               normalize(d.description).indexOf(key) !== -1;
-      });
-    }
-
-    if (!item || !item.data) return null;
-
+  function toLive(item) {
     var d = item.data;
     return {
       found: true,
@@ -325,6 +344,79 @@ window.IngersollCatalog = window.IngersollCatalog || (function () {
       // page path is built from seo_url, prefixed with /product/.
       url: d.seo_url ? ('/product/' + d.seo_url) : null
     };
+  }
+
+  function exactItem(key) {
+    var it = byNamePrefix[key] || bySku[key];
+    return it && it.data ? it : null;
+  }
+
+  // Follows the old -> new chain (up to 6 steps, loop-safe) and returns the
+  // first newer number that exists in the store: { partNo, live } or null.
+  function newerPart(key) {
+    var seen = {}; seen[key] = 1;
+    var first = null;
+    var cur = subsMap[key];
+    for (var i = 0; cur && i < 6 && !seen[cur]; i++) {
+      seen[cur] = 1;
+      var it = exactItem(cur);
+      if (it) {
+        var hit = { partNo: cur, live: toLive(it) };
+        if (hit.live.status === 'IN_STOCK') return hit;
+        first = first || hit;
+      }
+      cur = subsMap[cur];
+    }
+    return first;
+  }
+
+  // Returns { found, name, description, price, status, url } or null, plus
+  // replacedBy (this is the newer part shown in place of the printed
+  // number) or newer (the printed number is stocked, and so is this newer
+  // one). null reliably means NSS/O·L for this project (see note above).
+  function lookup(partNo) {
+    if (!cache) return null;
+    var key = normalize(partNo);
+    if (!key) return null;
+
+    // Placeholder part numbers (NSS = not separately serviced, TBD, N/A,
+    // with optional footnote stars / stray digits like "NSS*", "NSS22") are
+    // never real SKUs -- skip the store lookup so they always render as
+    // NSS/O·L. Without this, "NSS" matched the real store product
+    // "NSS USED DIFFERENTIAL CASE" by name prefix (2026-10-01 bug report).
+    if (/^(NSS|TBD|N\/?A)\**\d*$/.test(key)) return null;
+
+    if (resolved.hasOwnProperty(key)) return resolved[key];
+    return (resolved[key] = resolveLive(key));
+  }
+
+  function resolveLive(key) {
+    var item = exactItem(key);
+    var newer = subsMap[key] ? newerPart(key) : null;
+
+    if (item) {
+      var live = toLive(item);
+      if (newer && newer.live.status === 'IN_STOCK') {
+        if (live.status === 'IN_STOCK') {
+          live.newer = { partNo: newer.partNo, url: newer.live.url };
+        } else {
+          return Object.assign(newer.live, { replacedBy: newer.partNo });
+        }
+      }
+      return live;
+    }
+
+    if (newer) return Object.assign(newer.live, { replacedBy: newer.partNo });
+
+    item = cache.find(function (it) {
+      var d = it && it.data;
+      if (!d) return false;
+      return normalize(d.name).indexOf(key) !== -1 ||
+             normalize(d.description).indexOf(key) !== -1;
+    });
+
+    if (!item || !item.data) return null;
+    return toLive(item);
   }
 
   return { load: load, lookup: lookup };
@@ -552,6 +644,25 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
     });
   }
 
+  // Superseded-part notes (2026-11-23), shown under the description.
+  // replacedBy: the printed number was replaced, and the row now sells the
+  // newer part. newer: the printed number is in stock, and a newer
+  // replacement number is in stock too.
+  function subNoteHtml(v, forTooltip) {
+    const live = v.live;
+    if (!live) return '';
+    if (live.replacedBy) {
+      return `<div class="sub-note">Replaced by <b>${live.replacedBy}</b></div>`;
+    }
+    if (live.newer) {
+      const pn = `<b>${live.newer.partNo}</b>`;
+      const link = (!forTooltip && live.newer.url)
+        ? `<a href="${live.newer.url}" onclick="event.stopPropagation()">${pn}</a>` : pn;
+      return `<div class="sub-note">Newer part number ${link} also available</div>`;
+    }
+    return '';
+  }
+
   // A hotspot is "out of stock" for dot-coloring purposes only once the
   // catalog has finished loading AND every variant came back unavailable.
   // Before that, dots render in their normal color rather than flashing.
@@ -774,7 +885,8 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
       } else {
         statusLine = '<div class="tt-status out">' + (v.live ? 'Out of Stock' : 'Not Sold Sep. / Obtain Locally') + '</div>';
       }
-      return `<div class="tt-variant">${serialLine}<div style="font-weight:700">${v.desc}</div><div class="tt-part">${v.partNo}</div>${statusLine}</div>`;
+      const subLine = catalogLoaded ? subNoteHtml(v, true) : '';
+      return `<div class="tt-variant">${serialLine}<div style="font-weight:700">${v.desc}</div><div class="tt-part">${v.partNo}</div>${subLine}${statusLine}</div>`;
     }).join('');
 
     tt.innerHTML = `<div class="tt-ref">REF. ${h.ref}</div>${body}`;
@@ -830,7 +942,7 @@ window.IngersollWidgetInit = function (root, hotspots, footnotesText, sectionTit
         const refCell = i === 0 ? `<td class="ref-cell" rowspan="${variants.length}">${h.ref}</td>` : '';
         const serialCell = `<td class="serial-cell">${v.serialNote || ''}</td>`;
         const partnoCell = `<td class="partno-cell">${v.partNo}</td>`;
-        const descCell = `<td class="desc-cell">${v.desc}${v.live && v.live.price != null ? ` <span class="price">$${v.live.price.toFixed(2)}</span>` : ''}</td>`;
+        const descCell = `<td class="desc-cell">${v.desc}${v.live && v.live.price != null ? ` <span class="price">$${v.live.price.toFixed(2)}</span>` : ''}${catalogLoaded ? subNoteHtml(v, false) : ''}</td>`;
 
         let btnCell;
         if (!catalogLoaded) {
